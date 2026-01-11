@@ -345,16 +345,26 @@ class OllamaProvider(ModelProvider):
         # Tool calls'ı parse et
         tool_calls = []
         if "tool_calls" in message:
+            # Native tool calling format (Ollama's official format)
             for tc in message["tool_calls"]:
                 tool_calls.append({
                     "id": tc.get("id", f"call_{len(tool_calls)}"),
                     "name": tc.get("function", {}).get("name", ""),
                     "arguments": tc.get("function", {}).get("arguments", {}),
                 })
-        
+
+        # Fallback: If no native tool calls, try parsing from content
+        # Some models (like qwen2.5-coder:7b) output JSON in content instead
+        content = message.get("content", "")
+        if not tool_calls and content:
+            tool_calls = self._parse_tool_calls_from_text(content)
+            # Clean content if we found tool calls
+            if tool_calls:
+                content = self._clean_content_from_tool_calls(content)
+
         return {
             "id": data.get("created_at", ""),
-            "content": message.get("content", ""),
+            "content": content,
             "tool_calls": tool_calls,
             "finish_reason": data.get("done_reason", "stop"),
             "usage": {
@@ -462,8 +472,6 @@ After using tools, wait for the results before proceeding.
         if not tool_calls:
             # Find all potential JSON objects in the text
             # Use a simple brace counting approach for nested objects
-            import re
-
             # Find all JSON-like objects that contain "name" and "arguments"
             i = 0
             while i < len(text):
