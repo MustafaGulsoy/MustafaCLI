@@ -1,0 +1,39 @@
+[Unit]
+Description=MustafaCLI Agent Service
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=mustafacli
+Group=mustafacli
+WorkingDirectory=/opt/mustafacli
+EnvironmentFile=/opt/mustafacli/.env
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/mustafacli/workspace /var/log/mustafacli
+
+# Resource limits
+MemoryLimit=2G
+CPUQuota=200%
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+StartLimitBurst=3
+StartLimitInterval=60s
+
+# Main command
+ExecStart=/opt/mustafacli/venv/bin/local-agent
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mustafacli
+
+[Install]
+WantedBy=multi-user.target

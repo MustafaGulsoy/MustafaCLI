@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # Ollama service (local LLM)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: mustafacli-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MustafaCLI Agent
+  agent:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    container_name: mustafacli-agent
+    depends_on:
+      - ollama
+    ports:
+      - "8000:8000"  # Metrics port
+    environment:
+      - AGENT_MODEL_NAME=qwen2.5-coder:32b
+      - AGENT_WORKING_DIR=/workspace
+      - AGENT_LOG_LEVEL=INFO
+      - AGENT_ENABLE_METRICS=true
+      - AGENT_ALLOW_DANGEROUS_COMMANDS=false
+      - PROVIDER_TYPE=ollama
+      - PROVIDER_OLLAMA_URL=http://ollama:11434
+    volumes:
+      - workspace:/workspace
+      - logs:/var/log/mustafacli
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Prometheus (metrics collection)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mustafacli-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # Grafana (metrics visualization)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mustafacli-grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+
+volumes:
+  ollama-data:
+  workspace:
+  logs:
+  prometheus-data:
+  grafana-data:

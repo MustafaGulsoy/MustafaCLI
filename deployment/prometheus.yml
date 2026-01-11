@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'mustafacli-production'
+
+scrape_configs:
+  - job_name: 'mustafacli'
+    static_configs:
+      - targets: ['agent:8000']
+        labels:
+          service: 'agent'
+          environment: 'production'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+# Alerting rules (optional)
+# rule_files:
+#   - 'alerts.yml'
+
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: ['alertmanager:9093']

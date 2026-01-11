@@ -45,6 +45,7 @@ from .core.agent import Agent, AgentConfig, AgentState
 from .core.tools import create_default_tools, ToolResult
 from .core.context import ContextManager
 from .core.providers import create_provider
+from .core.config import AgentSettings
 
 
 class CLI:
@@ -428,6 +429,9 @@ def main():
     """
     CLI entry point
     """
+    # Load settings from .env file
+    settings = AgentSettings()
+
     parser = argparse.ArgumentParser(
         description="Local Agent CLI - Claude Code architecture with open source models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -448,8 +452,8 @@ Examples:
     
     parser.add_argument(
         "-m", "--model",
-        default="qwen2.5-coder:32b",
-        help="Model name (default: qwen2.5-coder:32b)"
+        default=settings.model_name,
+        help=f"Model name (default: {settings.model_name})"
     )
     
     parser.add_argument(

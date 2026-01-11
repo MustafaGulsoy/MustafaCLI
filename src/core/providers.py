@@ -442,11 +442,11 @@ After using tools, wait for the results before proceeding.
     def _parse_tool_calls_from_text(self, text: str) -> list[dict]:
         """Text'ten tool calls parse et"""
         tool_calls = []
-        
+
         # ```tool ... ``` pattern
         pattern = r'```tool\s*\n?(.*?)\n?```'
         matches = re.findall(pattern, text, re.DOTALL)
-        
+
         for i, match in enumerate(matches):
             try:
                 data = json.loads(match.strip())
@@ -457,21 +457,48 @@ After using tools, wait for the results before proceeding.
                 })
             except json.JSONDecodeError:
                 continue
-        
-        # Fallback: JSON object pattern (native olmayan bazı modeller için)
+
+        # Fallback: Try to find JSON objects with "name" and "arguments"
         if not tool_calls:
-            json_pattern = r'\{[^{}]*"name"\s*:\s*"[^"]+"\s*,[^{}]*"arguments"\s*:\s*\{[^{}]*\}[^{}]*\}'
-            for i, match in enumerate(re.findall(json_pattern, text)):
-                try:
-                    data = json.loads(match)
-                    tool_calls.append({
-                        "id": f"call_{i}",
-                        "name": data.get("name", ""),
-                        "arguments": data.get("arguments", {}),
-                    })
-                except json.JSONDecodeError:
-                    continue
-        
+            # Find all potential JSON objects in the text
+            # Use a simple brace counting approach for nested objects
+            import re
+
+            # Find all JSON-like objects that contain "name" and "arguments"
+            i = 0
+            while i < len(text):
+                if text[i] == '{':
+                    # Try to extract a complete JSON object starting here
+                    brace_count = 0
+                    start = i
+
+                    for j in range(i, len(text)):
+                        if text[j] == '{':
+                            brace_count += 1
+                        elif text[j] == '}':
+                            brace_count -= 1
+
+                        if brace_count == 0:
+                            # Found complete JSON object
+                            json_str = text[start:j+1]
+                            try:
+                                data = json.loads(json_str)
+                                # Check if it looks like a tool call
+                                if isinstance(data, dict) and "name" in data and "arguments" in data:
+                                    tool_calls.append({
+                                        "id": f"call_{len(tool_calls)}",
+                                        "name": data.get("name", ""),
+                                        "arguments": data.get("arguments", {}),
+                                    })
+                            except (json.JSONDecodeError, ValueError):
+                                pass
+                            i = j + 1
+                            break
+                    else:
+                        i += 1
+                else:
+                    i += 1
+
         return tool_calls
     
     def _clean_content_from_tool_calls(self, text: str) -> str:

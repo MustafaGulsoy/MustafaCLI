@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(python -m pytest:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(git tag:*)",
+      "Bash(git push:*)",
+      "Bash(chmod:*)",
+      "Bash(pytest:*)",
+      "Bash(curl:*)",
+      "Bash(where:*)",
+      "Bash(python:*)",
+      "Bash(.venvScriptsactivate)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(./venv/Scripts/local-agent.exe:*)",
+      "Bash(git add:*)"
     ]
   }
 }
