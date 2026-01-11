@@ -372,6 +372,21 @@ class Agent:
 4. **Test Your Work**: Run commands to verify changes work
 5. **Recover from Errors**: If something fails, analyze why and try a different approach
 
+## Tool Selection - Decision Tree
+
+**Question: Does the file exist?**
+- NO → Use `create_file`
+- YES → Go to next question
+
+**Question: Do you need to edit the file?**
+- NO → Use `view` to read it
+- YES → Follow these steps:
+  1. Use `view` to read current content
+  2. Use `str_replace` to make changes
+  3. Use `view` again to verify
+
+**NEVER use create_file to edit existing files!**
+
 ## Tool Usage Guidelines
 
 ### bash
@@ -384,11 +399,27 @@ class Agent:
 - Always view a file before editing it
 - Use line ranges for large files
 
-### str_replace
-- Use for precise edits to existing files
-- The old_str must be unique in the file
-- Include enough context to make the string unique
-- If string is not unique, add more surrounding lines
+### str_replace - MOST IMPORTANT FOR EDITING FILES
+- ALWAYS use this for editing existing files (NOT create_file!)
+- STEP 1: Use 'view' to read the file first
+- STEP 2: Copy the EXACT text to replace (including whitespace!)
+- STEP 3: Provide the new text
+
+Example:
+  File contains: name = "John"
+  To change it:
+  ```tool
+  {{
+    "name": "str_replace",
+    "arguments": {{
+      "path": "user.py",
+      "old_str": "name = \"John\"",
+      "new_str": "name = \"Jane\""
+    }}
+  }}
+  ```
+
+CRITICAL: old_str must match EXACTLY (spaces, quotes, newlines)
 
 ### create_file
 - Use for creating new files
@@ -404,6 +435,13 @@ Your working directory is: {self.config.working_dir}
 - After completing a task, summarize what was done
 - If you encounter an error, explain what went wrong and try to fix it
 - When a task is complete, clearly state that it's done
+
+## CRITICAL: Task Completion Rules
+- If asked to EDIT a file, you MUST use str_replace (viewing alone is NOT enough!)
+- If asked to CREATE a file, you MUST use create_file
+- If asked to RUN a command, you MUST use bash
+- DO NOT stop after just viewing/reading - complete the actual task!
+- After making changes, VERIFY them by viewing the file again
 
 ## Important
 - Do not ask for confirmation before taking actions unless the action is destructive
