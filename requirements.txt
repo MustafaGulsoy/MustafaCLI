@@ -1,0 +1,30 @@
+# Production dependencies - locked versions
+httpx==0.27.0
+rich==13.7.1
+structlog==24.1.0
+pydantic==2.6.0
+pydantic-settings==2.1.0
+tenacity==8.2.3
+prometheus-client==0.19.0
+psutil==5.9.8
+
+# Optional dependencies
+anthropic==0.18.0
+
+# Dependencies for httpx
+certifi==2024.2.2
+h11==0.14.0
+httpcore==1.0.4
+idna==3.6
+sniffio==1.3.0
+anyio==4.3.0
+
+# Dependencies for rich
+markdown-it-py==3.0.0
+mdurl==0.1.2
+pygments==2.17.2
+
+# Dependencies for pydantic
+annotated-types==0.6.0
+pydantic-core==2.16.0
+typing-extensions==4.9.0
