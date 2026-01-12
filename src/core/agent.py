@@ -126,7 +126,11 @@ class Agent:
         self.state = AgentState.IDLE
         self.current_iteration = 0
         self._consecutive_tool_calls = 0
-        
+
+        # Loop detection - track recent failed tools
+        self._recent_failed_tools: list[tuple[str, dict]] = []  # [(tool_name, args), ...]
+        self._max_same_failure = 2  # Stop after same failure repeats this many times
+
         # Callbacks for UI integration
         self._on_thinking: Optional[Callable[[str], None]] = None
         self._on_tool_start: Optional[Callable[[str, dict], None]] = None
@@ -165,7 +169,8 @@ class Agent:
         self.state = AgentState.THINKING
         self.current_iteration = 0
         self._consecutive_tool_calls = 0
-        
+        self._recent_failed_tools = []  # Reset failed tools for new query
+
         # Kullanıcı mesajını context'e ekle
         self.context.add_message(Message(
             role=MessageRole.USER,
@@ -200,7 +205,35 @@ class Agent:
                     # Tool'ları çalıştır
                     tool_results = await self._execute_tools(response.tool_calls)
                     response.tool_results = tool_results
-                    
+
+                    # Loop detection: Check for repeated failures
+                    for tool_call, result in zip(response.tool_calls, tool_results):
+                        if not result.success:
+                            tool_signature = (tool_call.get("name"), str(tool_call.get("arguments")))
+                            self._recent_failed_tools.append(tool_signature)
+
+                            # Keep only last 10 failures
+                            if len(self._recent_failed_tools) > 10:
+                                self._recent_failed_tools.pop(0)
+
+                            # Count how many times this exact failure occurred
+                            failure_count = self._recent_failed_tools.count(tool_signature)
+
+                            if failure_count >= self._max_same_failure:
+                                error_msg = f"\n\n[Agent: Same tool call failed {failure_count} times. Stopping to prevent loop.]\n"
+                                error_msg += f"Failed tool: {tool_call.get('name')} with args: {tool_call.get('arguments')}\n"
+                                error_msg += f"Error: {result.error}\n"
+                                error_msg += "Please try a different approach or ask the user for clarification."
+                                response.content += error_msg
+                                response.state = AgentState.COMPLETED
+                                self.context.add_message(Message(
+                                    role=MessageRole.SYSTEM,
+                                    content=error_msg,
+                                    timestamp=datetime.now(),
+                                ))
+                                yield response
+                                return
+
                     # Assistant mesajını context'e ekle
                     self.context.add_message(Message(
                         role=MessageRole.ASSISTANT,
@@ -442,6 +475,17 @@ Your working directory is: {self.config.working_dir}
 - If asked to RUN a command, you MUST use bash
 - DO NOT stop after just viewing/reading - complete the actual task!
 - After making changes, VERIFY them by viewing the file again
+
+## ERROR RECOVERY - MOST IMPORTANT!
+- If a tool call FAILS, ANALYZE WHY before trying again
+- DO NOT repeat the EXACT SAME failing command
+- Common issues:
+  * Path with spaces: Use 'ahmet mehmet' NOT ahmet_mehmet
+  * Windows: Use forward slashes or quotes for paths
+  * Missing file: Check with 'view' first
+- If same error happens 2 times, TRY A DIFFERENT APPROACH
+- If 'view' works but 'bash' fails for same file → JUST USE VIEW!
+- When you answer a question, STOP - don't keep calling tools unnecessarily
 
 ## Important
 - Do not ask for confirmation before taking actions unless the action is destructive

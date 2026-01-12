@@ -1,4 +1,0 @@
-Bu dosya şifreleri içeriyor.
-
-Şifre1: ********
-Şifre2: ********
