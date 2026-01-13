@@ -1,0 +1,99 @@
+<!-- Chat Component Template -->
+<div class="chat-container">
+  <!-- Header -->
+  <div class="chat-header">
+    <div class="header-left">
+      <h1>🤖 MustafaCLI Agent</h1>
+      <span class="status" [class.connected]="isConnected" [class.disconnected]="!isConnected">
+        {{ isConnected ? 'Connected' : 'Disconnected' }}
+      </span>
+    </div>
+    <div class="header-right">
+      <label class="rag-toggle">
+        <input type="checkbox" [(ngModel)]="ragEnabled" (change)="toggleRag()" [disabled]="isLoading">
+        <span>RAG</span>
+      </label>
+      <button class="btn-secondary" (click)="clearChat()" [disabled]="isLoading">Clear</button>
+    </div>
+  </div>
+
+  <!-- Messages -->
+  <div class="chat-messages">
+    <div *ngFor="let message of messages" class="message" [class.user]="message.role === 'user'" [class.assistant]="message.role === 'assistant'" [class.system]="message.role === 'system'">
+
+      <div class="message-header">
+        <span class="role">{{ message.role === 'user' ? '👤 You' : message.role === 'assistant' ? '🤖 Agent' : '⚙️ System' }}</span>
+        <span class="timestamp">{{ message.timestamp | date:'short' }}</span>
+        <span *ngIf="message.iteration" class="iteration">Iteration {{ message.iteration }}</span>
+      </div>
+
+      <div class="message-content">
+        <pre>{{ message.content }}</pre>
+      </div>
+
+      <!-- Tool Calls -->
+      <div *ngIf="message.tool_calls && message.tool_calls.length > 0" class="tool-calls">
+        <div class="section-title">🔧 Tool Calls:</div>
+        <div *ngFor="let call of message.tool_calls" class="tool-call">
+          <strong>{{ call.name }}</strong>
+          <pre>{{ call.arguments | json }}</pre>
+        </div>
+      </div>
+
+      <!-- Tool Results -->
+      <div *ngIf="message.tool_results && message.tool_results.length > 0" class="tool-results">
+        <div class="section-title">📊 Results:</div>
+        <div *ngFor="let result of message.tool_results" class="tool-result" [class.success]="result.success" [class.failure]="!result.success">
+          <div class="result-header">
+            <strong>{{ result.name }}</strong>
+            <span class="badge">{{ result.success ? '✓ Success' : '✗ Failed' }}</span>
+          </div>
+          <pre class="result-output">{{ result.output }}</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div *ngIf="isLoading" class="message assistant loading">
+      <div class="message-header">
+        <span class="role">🤖 Agent</span>
+        <span class="timestamp">Thinking...</span>
+      </div>
+      <div class="message-content">
+        <div class="loader">
+          <div class="dot"></div>
+          <div class="dot"></div>
+          <div class="dot"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="chat-input">
+    <textarea
+      [(ngModel)]="userInput"
+      (keydown.enter)="$event.preventDefault(); sendMessage()"
+      (keydown.shift.enter)="$event.preventDefault(); userInput = userInput + '\n'"
+      placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+      [disabled]="!isConnected || isLoading"
+      rows="3"
+    ></textarea>
+    <div class="input-actions">
+      <button
+        class="btn-primary"
+        (click)="sendMessage()"
+        [disabled]="!isConnected || isLoading || !userInput.trim()"
+      >
+        Send
+      </button>
+      <button
+        *ngIf="isLoading"
+        class="btn-danger"
+        (click)="cancelOperation()"
+      >
+        Cancel
+      </button>
+    </div>
+  </div>
+</div>
