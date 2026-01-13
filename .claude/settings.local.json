@@ -14,7 +14,9 @@
       "Bash(./venv/Scripts/python.exe:*)",
       "Bash(./venv/Scripts/local-agent.exe:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(venvScriptsactivate)",
+      "Bash(venvScriptspython.exe test_cache.py)"
     ]
   }
 }

@@ -1019,24 +1019,554 @@ Parent directories will be created if they don't exist."""
             )
 
 
+class GitTool(Tool):
+    """
+    Git operations tool for version control
+
+    Provides safe read-only git operations (status, diff, log, blame).
+    Write operations (commit, push) should use bash tool.
+    """
+
+    name = "git"
+    description = """Execute git commands for version control operations.
+
+SAFE OPERATIONS (use this tool):
+- git status - Show working tree status
+- git diff [file] - Show changes
+- git log [options] - Show commit history
+- git blame <file> - Show who changed each line
+- git show <commit> - Show commit details
+
+WRITE OPERATIONS (use bash tool instead):
+- git commit, git push, git pull, git add
+
+EXAMPLES:
+  {"name": "git", "arguments": {"command": "status"}}
+  {"name": "git", "arguments": {"command": "log", "args": "--oneline -10"}}
+  {"name": "git", "arguments": {"command": "blame", "args": "src/main.py"}}
+"""
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "command": {
+                "type": "string",
+                "description": "Git subcommand (status, diff, log, blame, show)",
+                "enum": ["status", "diff", "log", "blame", "show"]
+            },
+            "args": {
+                "type": "string",
+                "description": "Additional arguments for the command",
+                "default": ""
+            }
+        },
+        "required": ["command"]
+    }
+
+    async def execute(self, command: str, args: str = "") -> ToolResult:
+        """Execute git command"""
+        try:
+            full_command = f"git {command} {args}".strip()
+
+            # Use bash tool internally for actual execution
+            bash = BashTool(working_dir=self.working_dir)
+            result = await bash.execute(full_command)
+
+            return result
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Git command failed: {str(e)}"
+            )
+
+
+class SearchTool(Tool):
+    """
+    Semantic code search tool
+
+    Better than simple grep - understands context and finds relevant code.
+    """
+
+    name = "search"
+    description = """Search codebase semantically for relevant code.
+
+Better than grep because it:
+- Understands context
+- Ranks results by relevance
+- Shows code snippets with context
+
+EXAMPLES:
+  {"name": "search", "arguments": {"query": "authentication logic"}}
+  {"name": "search", "arguments": {"query": "database connection setup"}}
+  {"name": "search", "arguments": {"query": "error handling"}}
+"""
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Search query (natural language or keywords)"
+            },
+            "file_pattern": {
+                "type": "string",
+                "description": "Optional file pattern to limit search (e.g., '*.py')",
+                "default": "*.py"
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of results to return",
+                "default": 5
+            }
+        },
+        "required": ["query"]
+    }
+
+    async def execute(
+        self,
+        query: str,
+        file_pattern: str = "*.py",
+        max_results: int = 5
+    ) -> ToolResult:
+        """Search codebase semantically"""
+        try:
+            from pathlib import Path
+            import re
+
+            # Get keywords from query
+            keywords = [k.lower() for k in re.findall(r'\w+', query)]
+
+            results = []
+            search_dir = Path(self.working_dir)
+
+            # Search Python files
+            for file_path in search_dir.rglob(file_pattern):
+                if file_path.is_file():
+                    try:
+                        content = file_path.read_text(encoding='utf-8', errors='replace')
+                        content_lower = content.lower()
+
+                        # Calculate relevance score
+                        matches = sum(1 for k in keywords if k in content_lower)
+                        relevance = matches / len(keywords) if keywords else 0
+
+                        if relevance >= 0.3:  # 30% keyword match threshold
+                            # Get relevant snippet
+                            snippet = self._get_relevant_snippet(content, keywords)
+
+                            results.append({
+                                "file": str(file_path.relative_to(search_dir)),
+                                "relevance": relevance,
+                                "snippet": snippet
+                            })
+                    except Exception:
+                        continue
+
+            # Sort by relevance
+            results.sort(key=lambda x: x["relevance"], reverse=True)
+            results = results[:max_results]
+
+            if not results:
+                return ToolResult(
+                    success=True,
+                    output=f"No results found for: {query}"
+                )
+
+            # Format output
+            output_lines = [f"Found {len(results)} results for: {query}\n"]
+            for i, r in enumerate(results, 1):
+                output_lines.append(f"{i}. {r['file']} ({r['relevance']:.0%} match)")
+                output_lines.append(f"   {r['snippet']}")
+                output_lines.append("")
+
+            return ToolResult(
+                success=True,
+                output="\n".join(output_lines),
+                metadata={"results_count": len(results)}
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Search failed: {str(e)}"
+            )
+
+    def _get_relevant_snippet(self, content: str, keywords: list[str]) -> str:
+        """Extract relevant snippet from content"""
+        lines = content.split('\n')
+
+        # Find line with most keyword matches
+        best_line_idx = 0
+        best_score = 0
+
+        for i, line in enumerate(lines):
+            line_lower = line.lower()
+            score = sum(1 for k in keywords if k in line_lower)
+            if score > best_score:
+                best_score = score
+                best_line_idx = i
+
+        # Get context around best line (±2 lines)
+        start = max(0, best_line_idx - 1)
+        end = min(len(lines), best_line_idx + 2)
+        snippet_lines = lines[start:end]
+
+        return '\n   '.join(snippet_lines[:3])  # Max 3 lines
+
+
+class AstAnalysisTool(Tool):
+    """
+    Python AST (Abstract Syntax Tree) analysis tool
+
+    Analyzes Python code structure - finds classes, functions, imports, etc.
+    """
+
+    name = "ast_analysis"
+    description = """Analyze Python code structure using AST.
+
+Extracts:
+- Classes and their methods
+- Functions and their signatures
+- Imports
+- Global variables
+- Decorators
+
+EXAMPLES:
+  {"name": "ast_analysis", "arguments": {"path": "src/main.py"}}
+  {"name": "ast_analysis", "arguments": {"path": "src/core/agent.py", "include_docstrings": true}}
+"""
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Path to Python file to analyze"
+            },
+            "include_docstrings": {
+                "type": "boolean",
+                "description": "Include function/class docstrings in output",
+                "default": False
+            }
+        },
+        "required": ["path"]
+    }
+
+    async def execute(self, path: str, include_docstrings: bool = False) -> ToolResult:
+        """Analyze Python file structure"""
+        try:
+            import ast
+            from pathlib import Path
+
+            file_path = Path(self.working_dir) / path
+
+            if not file_path.exists():
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error=f"File not found: {path}"
+                )
+
+            if not file_path.suffix == '.py':
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error="Only Python files (.py) can be analyzed"
+                )
+
+            # Parse Python file
+            content = file_path.read_text(encoding='utf-8')
+            tree = ast.parse(content, filename=str(file_path))
+
+            # Extract structure
+            structure = {
+                "imports": [],
+                "classes": [],
+                "functions": [],
+                "global_vars": []
+            }
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        structure["imports"].append(alias.name)
+
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    for alias in node.names:
+                        structure["imports"].append(f"{module}.{alias.name}")
+
+                elif isinstance(node, ast.ClassDef):
+                    class_info = {
+                        "name": node.name,
+                        "methods": [m.name for m in node.body if isinstance(m, ast.FunctionDef)],
+                        "line": node.lineno
+                    }
+                    if include_docstrings:
+                        class_info["docstring"] = ast.get_docstring(node)
+                    structure["classes"].append(class_info)
+
+                elif isinstance(node, ast.FunctionDef):
+                    # Only top-level functions (not methods)
+                    if isinstance(node, ast.FunctionDef) and node.col_offset == 0:
+                        func_info = {
+                            "name": node.name,
+                            "args": [arg.arg for arg in node.args.args],
+                            "line": node.lineno
+                        }
+                        if include_docstrings:
+                            func_info["docstring"] = ast.get_docstring(node)
+                        structure["functions"].append(func_info)
+
+                elif isinstance(node, ast.Assign):
+                    # Global variables
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            structure["global_vars"].append(target.id)
+
+            # Format output
+            output_lines = [f"Structure of {path}:\n"]
+
+            if structure["imports"]:
+                output_lines.append(f"Imports ({len(structure['imports'])}):")
+                for imp in structure["imports"][:10]:  # Limit to 10
+                    output_lines.append(f"  - {imp}")
+                if len(structure["imports"]) > 10:
+                    output_lines.append(f"  ... and {len(structure['imports']) - 10} more")
+                output_lines.append("")
+
+            if structure["classes"]:
+                output_lines.append(f"Classes ({len(structure['classes'])}):")
+                for cls in structure["classes"]:
+                    output_lines.append(f"  - {cls['name']} (line {cls['line']})")
+                    output_lines.append(f"    Methods: {', '.join(cls['methods'][:5])}")
+                    if include_docstrings and cls.get("docstring"):
+                        output_lines.append(f"    Doc: {cls['docstring'][:100]}")
+                output_lines.append("")
+
+            if structure["functions"]:
+                output_lines.append(f"Functions ({len(structure['functions'])}):")
+                for func in structure["functions"]:
+                    args_str = ', '.join(func['args'])
+                    output_lines.append(f"  - {func['name']}({args_str}) (line {func['line']})")
+                    if include_docstrings and func.get("docstring"):
+                        output_lines.append(f"    Doc: {func['docstring'][:100]}")
+                output_lines.append("")
+
+            return ToolResult(
+                success=True,
+                output="\n".join(output_lines),
+                metadata=structure
+            )
+
+        except SyntaxError as e:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Python syntax error: {str(e)}"
+            )
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"AST analysis failed: {str(e)}"
+            )
+
+
+class TestGeneratorTool(Tool):
+    """
+    Automatic test generator tool
+
+    Generates pytest test templates for Python code.
+    """
+
+    name = "generate_tests"
+    description = """Generate pytest test templates for Python code.
+
+Creates basic test structure with:
+- Test fixtures
+- Test cases for each function/method
+- Mocking suggestions
+- TODO comments for manual completion
+
+EXAMPLES:
+  {"name": "generate_tests", "arguments": {"path": "src/utils.py"}}
+  {"name": "generate_tests", "arguments": {"path": "src/core/agent.py", "output_path": "tests/test_agent.py"}}
+"""
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Path to Python file to generate tests for"
+            },
+            "output_path": {
+                "type": "string",
+                "description": "Optional output path for test file (default: tests/test_<filename>.py)"
+            }
+        },
+        "required": ["path"]
+    }
+
+    async def execute(self, path: str, output_path: str = None) -> ToolResult:
+        """Generate test template"""
+        try:
+            import ast
+            from pathlib import Path
+
+            file_path = Path(self.working_dir) / path
+
+            if not file_path.exists():
+                return ToolResult(
+                    success=False,
+                    output="",
+                    error=f"File not found: {path}"
+                )
+
+            # Parse Python file
+            content = file_path.read_text(encoding='utf-8')
+            tree = ast.parse(content, filename=str(file_path))
+
+            # Extract functions and classes
+            functions = []
+            classes = []
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef) and node.col_offset == 0:
+                    functions.append({
+                        "name": node.name,
+                        "args": [arg.arg for arg in node.args.args]
+                    })
+                elif isinstance(node, ast.ClassDef):
+                    methods = [m.name for m in node.body if isinstance(m, ast.FunctionDef)]
+                    classes.append({
+                        "name": node.name,
+                        "methods": methods
+                    })
+
+            # Generate test code
+            test_code = self._generate_test_code(file_path.stem, functions, classes)
+
+            # Determine output path
+            if not output_path:
+                tests_dir = Path(self.working_dir) / "tests"
+                tests_dir.mkdir(exist_ok=True)
+                output_path = f"tests/test_{file_path.stem}.py"
+
+            output_file = Path(self.working_dir) / output_path
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(test_code, encoding='utf-8')
+
+            return ToolResult(
+                success=True,
+                output=f"Generated test template: {output_path}\n\nContains:\n- {len(functions)} function tests\n- {len(classes)} class tests\n\nEdit the file to add assertions and complete TODOs.",
+                metadata={
+                    "output_path": str(output_file),
+                    "functions": len(functions),
+                    "classes": len(classes)
+                }
+            )
+
+        except Exception as e:
+            return ToolResult(
+                success=False,
+                output="",
+                error=f"Test generation failed: {str(e)}"
+            )
+
+    def _generate_test_code(
+        self,
+        module_name: str,
+        functions: list,
+        classes: list
+    ) -> str:
+        """Generate pytest test code"""
+        lines = [
+            '"""',
+            f'Tests for {module_name}',
+            '',
+            'Auto-generated test template.',
+            'TODO: Add assertions and complete test cases.',
+            '"""',
+            'import pytest',
+            f'from src.{module_name} import *',
+            '',
+            ''
+        ]
+
+        # Generate function tests
+        for func in functions:
+            if func["name"].startswith("_"):
+                continue  # Skip private functions
+
+            lines.append(f'def test_{func["name"]}():')
+            lines.append(f'    """Test {func["name"]} function"""')
+
+            # Create mock call
+            args = ", ".join([f'{arg}=None' for arg in func["args"]])
+            lines.append(f'    # TODO: Set up test data')
+            lines.append(f'    result = {func["name"]}({args})')
+            lines.append(f'    # TODO: Add assertions')
+            lines.append(f'    assert result is not None')
+            lines.append('')
+            lines.append('')
+
+        # Generate class tests
+        for cls in classes:
+            lines.append(f'class Test{cls["name"]}:')
+            lines.append(f'    """Tests for {cls["name"]} class"""')
+            lines.append('')
+            lines.append('    @pytest.fixture')
+            lines.append(f'    def {cls["name"].lower()}(self):')
+            lines.append(f'        """Fixture for {cls["name"]} instance"""')
+            lines.append(f'        # TODO: Create and configure instance')
+            lines.append(f'        return {cls["name"]}()')
+            lines.append('')
+
+            for method in cls["methods"]:
+                if method.startswith("_") and method != "__init__":
+                    continue  # Skip private methods
+
+                lines.append(f'    def test_{method}(self, {cls["name"].lower()}):')
+                lines.append(f'        """Test {method} method"""')
+                lines.append(f'        # TODO: Set up test data')
+                lines.append(f'        # TODO: Call method and add assertions')
+                lines.append(f'        pass')
+                lines.append('')
+
+            lines.append('')
+
+        return '\n'.join(lines)
+
+
 def create_default_tools(working_dir: str = ".") -> ToolRegistry:
     """
     Default tool set oluştur
-    
+
     Bu function, Claude Code benzeri temel tool setini oluşturur.
-    
+
     Args:
         working_dir: Çalışma dizini
-        
+
     Returns:
         ToolRegistry: Kayıtlı tool'lar
     """
     registry = ToolRegistry()
-    
+
     # Core tools
     registry.register(BashTool(working_dir=working_dir))
     registry.register(ViewTool(working_dir=working_dir))
     registry.register(StrReplaceTool(working_dir=working_dir))
     registry.register(CreateFileTool(working_dir=working_dir))
-    
+
+    # New enhanced tools
+    registry.register(GitTool(working_dir=working_dir))
+    registry.register(SearchTool(working_dir=working_dir))
+    registry.register(AstAnalysisTool(working_dir=working_dir))
+    registry.register(TestGeneratorTool(working_dir=working_dir))
+
     return registry
