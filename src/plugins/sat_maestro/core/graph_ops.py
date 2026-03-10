@@ -293,6 +293,68 @@ class GraphOperations:
 
         return run_id
 
+    # -- Gerber/PCB operations --
+
+    async def create_pad(self, pad) -> str:
+        """Create a Pad node in the graph."""
+        query = """
+        CREATE (p:Pad {
+            id: $id, x: $x, y: $y, aperture: $aperture,
+            layer: $layer, net_name: $net_name
+        })
+        RETURN p.id AS id
+        """
+        result = await self._client.execute_write(query, {
+            "id": pad.id,
+            "x": pad.x,
+            "y": pad.y,
+            "aperture": pad.aperture,
+            "layer": getattr(pad, "layer", ""),
+            "net_name": getattr(pad, "net_name", ""),
+        })
+        return result[0]["id"] if result else pad.id
+
+    async def create_trace(self, trace) -> str:
+        """Create a Trace node in the graph."""
+        query = """
+        CREATE (t:Trace {
+            id: $id, start_x: $start_x, start_y: $start_y,
+            end_x: $end_x, end_y: $end_y, width: $width,
+            layer: $layer, net_name: $net_name
+        })
+        RETURN t.id AS id
+        """
+        result = await self._client.execute_write(query, {
+            "id": trace.id,
+            "start_x": trace.start_x,
+            "start_y": trace.start_y,
+            "end_x": trace.end_x,
+            "end_y": trace.end_y,
+            "width": trace.width,
+            "layer": getattr(trace, "layer", ""),
+            "net_name": getattr(trace, "net_name", ""),
+        })
+        return result[0]["id"] if result else trace.id
+
+    async def link_pad_to_component(self, pad_id: str, component_id: str) -> None:
+        """Link a pad to its parent component."""
+        query = """
+        MATCH (p:Pad {id: $pad_id}), (c:Component {id: $comp_id})
+        CREATE (c)-[:HAS_PAD]->(p)
+        """
+        await self._client.execute_write(query, {"pad_id": pad_id, "comp_id": component_id})
+
+    async def get_pcb_stats(self) -> dict:
+        """Get statistics about PCB data in the graph."""
+        pad_query = "MATCH (p:Pad) RETURN count(p) AS count"
+        trace_query = "MATCH (t:Trace) RETURN count(t) AS count"
+        pad_result = await self._client.execute(pad_query)
+        trace_result = await self._client.execute(trace_query)
+        return {
+            "pads": pad_result[0]["count"] if pad_result else 0,
+            "traces": trace_result[0]["count"] if trace_result else 0,
+        }
+
     async def clear_graph(self) -> None:
         """Delete all nodes and relationships. Use with caution."""
         await self._client.execute_write("MATCH (n) DETACH DELETE n")

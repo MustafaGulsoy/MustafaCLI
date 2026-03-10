@@ -1,23 +1,45 @@
+# Standalone SAT-MAESTRO Neo4j for development
+# Usage: docker compose -f docker-compose.sat-maestro.yml up -d
+#
+# Or use the main compose with profile:
+# docker compose --profile sat-maestro up -d
+
 services:
   neo4j:
     image: neo4j:5-community
     container_name: mustafacli-neo4j
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "7474:7474"   # Browser UI → http://localhost:7474
+      - "7687:7687"   # Bolt protocol
     environment:
-      NEO4J_AUTH: neo4j/password
+      NEO4J_AUTH: neo4j/satmaestro
       NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 256m
       NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 256m
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p password 'RETURN 1'"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p satmaestro 'RETURN 1'"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Optional: Pull a vision model into Ollama
+  ollama-vision-setup:
+    image: curlimages/curl:latest
+    container_name: mustafacli-vision-setup
+    depends_on:
+      - neo4j
+    entrypoint: >
+      sh -c "echo 'SAT-MAESTRO Neo4j ready at http://localhost:7474' &&
+             echo 'Default credentials: neo4j / satmaestro' &&
+             echo '' &&
+             echo 'To pull a vision model for PDF analysis:' &&
+             echo '  ollama pull llava:13b'"
+    restart: "no"
 
 volumes:
   neo4j-data:

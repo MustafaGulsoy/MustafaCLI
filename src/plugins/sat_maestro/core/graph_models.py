@@ -98,6 +98,31 @@ class Violation:
 
 
 @dataclass
+class Pad:
+    """PCB pad from Gerber data."""
+    id: str
+    x: float
+    y: float
+    aperture: str
+    layer: str = ""
+    net_name: str = ""
+    component_id: str = ""
+
+
+@dataclass
+class Trace:
+    """PCB trace from Gerber data."""
+    id: str
+    start_x: float
+    start_y: float
+    end_x: float
+    end_y: float
+    width: float
+    layer: str = ""
+    net_name: str = ""
+
+
+@dataclass
 class AnalysisResult:
     analyzer: str
     status: AnalysisStatus

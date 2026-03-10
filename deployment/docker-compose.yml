@@ -1,6 +1,6 @@
-version: '3.8'
-
 services:
+  # ── Core Services ───────────────────────────────────────────────
+
   # PostgreSQL Database
   postgres:
     image: postgres:16-alpine
@@ -63,6 +63,12 @@ services:
       - AGENT_JWT_SECRET=change-me-in-production-please
       - PROVIDER_TYPE=ollama
       - PROVIDER_OLLAMA_URL=http://ollama:11434
+      # SAT-MAESTRO env vars (only used if plugin is enabled)
+      - SAT_MAESTRO_NEO4J_URI=bolt://neo4j:7687
+      - SAT_MAESTRO_NEO4J_USER=neo4j
+      - SAT_MAESTRO_NEO4J_PASSWORD=satmaestro
+      - SAT_MAESTRO_OLLAMA_URL=http://ollama:11434
+      - SAT_MAESTRO_VISION_MODEL=llava:13b
     volumes:
       - workspace:/workspace
       - logs:/var/log/mustafacli
@@ -80,10 +86,13 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── Monitoring ──────────────────────────────────────────────────
+
   # Prometheus (metrics collection)
   prometheus:
     image: prom/prometheus:latest
     container_name: mustafacli-prometheus
+    profiles: ["monitoring"]
     ports:
       - "9090:9090"
     volumes:
@@ -98,6 +107,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: mustafacli-grafana
+    profiles: ["monitoring"]
     ports:
       - "3000:3000"
     volumes:
@@ -107,6 +117,32 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     restart: unless-stopped
 
+  # ── SAT-MAESTRO Plugin Services ────────────────────────────────
+
+  # Neo4j Knowledge Graph (SAT-MAESTRO)
+  neo4j:
+    image: neo4j:5-community
+    container_name: mustafacli-neo4j
+    profiles: ["sat-maestro"]
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt protocol
+    environment:
+      NEO4J_AUTH: neo4j/satmaestro
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_memory_heap_initial__size: 256m
+      NEO4J_dbms_memory_heap_max__size: 1G
+      NEO4J_dbms_memory_pagecache_size: 256m
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p satmaestro 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres-data:
   ollama-data:
@@ -114,3 +150,5 @@ volumes:
   logs:
   prometheus-data:
   grafana-data:
+  neo4j-data:
+  neo4j-logs:

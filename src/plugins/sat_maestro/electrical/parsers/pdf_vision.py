@@ -148,11 +148,60 @@ Be thorough and precise. Include ALL visible components and connections."""
         return pages
 
     async def _analyze_page(self, image_data: bytes, subsystem: str, page_num: int) -> dict[str, Any]:
-        """Send a page image to LLM vision for analysis."""
-        # This would integrate with the actual LLM provider
-        # For now, return empty result - will be connected to Ollama vision
-        logger.info("Analyzing page %d via LLM vision", page_num)
-        return {"components": [], "nets": [], "confidence": 0.0}
+        """Send a page image to Ollama vision API for analysis."""
+        import base64
+        import httpx
+
+        logger.info("Analyzing page %d via LLM vision (model: %s)", page_num, self._config.vision_model)
+
+        image_b64 = base64.b64encode(image_data).decode("utf-8")
+
+        payload = {
+            "model": self._config.vision_model,
+            "prompt": self.EXTRACTION_PROMPT,
+            "images": [image_b64],
+            "stream": False,
+            "options": {
+                "temperature": 0.1,  # Low temperature for structured extraction
+            },
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{self._config.ollama_url}/api/generate",
+                    json=payload,
+                )
+                response.raise_for_status()
+
+                data = response.json()
+                raw_response = data.get("response", "")
+
+                # Parse the LLM response into structured data
+                parsed = self.parse_llm_json(raw_response)
+
+                if not parsed:
+                    logger.warning("Page %d: Could not parse LLM response as JSON", page_num)
+                    return {"components": [], "nets": [], "confidence": 0.0}
+
+                return {
+                    "components": parsed.get("components", []),
+                    "nets": parsed.get("nets", []),
+                    "confidence": parsed.get("confidence", 0.5),
+                }
+
+        except httpx.ConnectError:
+            logger.error("Cannot connect to Ollama at %s", self._config.ollama_url)
+            raise ConnectionError(
+                f"Cannot connect to Ollama at {self._config.ollama_url}. "
+                "Ensure Ollama is running with a vision model."
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error("Ollama API error: %s", e)
+            raise RuntimeError(f"Ollama vision API error: {e}")
+        except Exception as e:
+            logger.error("Vision analysis failed for page %d: %s", page_num, e)
+            raise
 
     def _convert_components(self, raw_components: list[dict[str, Any]], subsystem: str, result: PdfVisionResult) -> None:
         """Convert raw LLM component data to graph models."""

@@ -83,7 +83,7 @@ class SatMaestroPlugin(PluginBase):
             )
         return None
 
-    # ── Import Tools ──────────────────────────────────────────────
+    # -- Import Tools --
 
     @plugin_tool(
         name="sat_import_kicad",
@@ -141,20 +141,34 @@ class SatMaestroPlugin(PluginBase):
             import os
             if os.path.isdir(file_path):
                 results = parser.parse_directory(file_path)
-                total_pads = sum(len(r.pads) for r in results)
-                total_traces = sum(len(r.traces) for r in results)
+                total_pads = 0
+                total_traces = 0
+                for r in results:
+                    layer = r.layers[0] if r.layers else ""
+                    for pad in r.pads:
+                        pad.layer = layer
+                        await self._graph.create_pad(pad)
+                        total_pads += 1
+                    for trace in r.traces:
+                        trace.layer = layer
+                        await self._graph.create_trace(trace)
+                        total_traces += 1
                 output = (
                     f"Imported Gerber directory: {file_path}\n"
                     f"  Files: {len(results)}\n"
-                    f"  Pads: {total_pads}\n"
-                    f"  Traces: {total_traces}"
+                    f"  Pads loaded to Neo4j: {total_pads}\n"
+                    f"  Traces loaded to Neo4j: {total_traces}"
                 )
             else:
                 result = parser.parse(file_path)
+                for pad in result.pads:
+                    await self._graph.create_pad(pad)
+                for trace in result.traces:
+                    await self._graph.create_trace(trace)
                 output = (
                     f"Imported Gerber file: {file_path}\n"
-                    f"  Pads: {len(result.pads)}\n"
-                    f"  Traces: {len(result.traces)}\n"
+                    f"  Pads loaded to Neo4j: {len(result.pads)}\n"
+                    f"  Traces loaded to Neo4j: {len(result.traces)}\n"
                     f"  Apertures: {len(result.apertures)}"
                 )
 
@@ -203,7 +217,7 @@ class SatMaestroPlugin(PluginBase):
         except Exception as e:
             return ToolResult(success=False, output="", error=str(e))
 
-    # ── Analysis Tools ────────────────────────────────────────────
+    # -- Analysis Tools --
 
     @plugin_tool(
         name="sat_verify_pins",
