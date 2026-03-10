@@ -179,6 +179,40 @@ class AgentSettings(BaseSettings):
         description="Use JSON format for logs",
     )
 
+    # Database
+    database_url: str = Field(
+        default="postgresql+asyncpg://mustafa:password@localhost:5432/mustafacli",
+        description="PostgreSQL connection URL",
+    )
+
+    # Authentication
+    jwt_secret: str = Field(
+        default="change-me-in-production-please",
+        description="JWT signing secret key",
+    )
+    jwt_expire_minutes: int = Field(
+        default=60,
+        gt=1,
+        le=1440,
+        description="JWT access token expiration in minutes",
+    )
+
+    # Plugin system
+    plugins_dir: Optional[Path] = Field(
+        default=None,
+        description="Directory containing plugins",
+    )
+    enable_mcp: bool = Field(
+        default=True,
+        description="Enable MCP protocol support",
+    )
+
+    # Internationalization
+    default_locale: str = Field(
+        default="en",
+        description="Default locale (en, tr)",
+    )
+
     @field_validator("working_dir", mode="before")
     @classmethod
     def resolve_working_dir(cls, v: str | Path) -> Path:

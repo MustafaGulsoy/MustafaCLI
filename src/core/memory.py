@@ -372,3 +372,221 @@ class PersistentMemory:
             access_count=row["access_count"],
             tags=json.loads(row["tags"]) if row["tags"] else [],
         )
+
+
+class PostgresMemory:
+    """
+    PostgreSQL-based persistent memory system.
+
+    Uses async SQLAlchemy with the MemoryEntry ORM model from src.db.models.
+    Same interface as PersistentMemory for drop-in replacement.
+    """
+
+    def __init__(self, user_id: int = 0) -> None:
+        self.user_id = user_id
+        logger.info("postgres_memory_initialized", user_id=user_id)
+
+    async def store(
+        self,
+        type: MemoryType,
+        key: str,
+        value: str,
+        context: str = "",
+        confidence: float = 1.0,
+        tags: Optional[List[str]] = None,
+    ) -> int:
+        """Store memory entry in PostgreSQL."""
+        from ..db.database import get_session
+        from ..db.models import MemoryEntry as DBMemoryEntry
+
+        async with get_session() as session:
+            # Upsert: check existing
+            from sqlalchemy import select, and_
+            result = await session.execute(
+                select(DBMemoryEntry).where(
+                    and_(
+                        DBMemoryEntry.user_id == self.user_id,
+                        DBMemoryEntry.key == key,
+                    )
+                )
+            )
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                existing.value = value
+                existing.context = context
+                existing.confidence = confidence
+                existing.tags = tags or []
+                existing.type = type.value
+                existing.updated_at = datetime.now()
+                entry_id = existing.id
+            else:
+                entry = DBMemoryEntry(
+                    user_id=self.user_id,
+                    type=type.value,
+                    key=key,
+                    value=value,
+                    context=context,
+                    confidence=confidence,
+                    tags=tags or [],
+                )
+                session.add(entry)
+                await session.flush()
+                entry_id = entry.id
+
+        logger.info("pg_memory_stored", key=key, type=type.value, id=entry_id)
+        return entry_id
+
+    async def retrieve(self, key: str) -> Optional[MemoryEntry]:
+        """Retrieve memory entry by key from PostgreSQL."""
+        from ..db.database import get_session
+        from ..db.models import MemoryEntry as DBMemoryEntry
+        from sqlalchemy import and_
+
+        async with get_session() as session:
+            from sqlalchemy import select
+            result = await session.execute(
+                select(DBMemoryEntry).where(
+                    and_(
+                        DBMemoryEntry.user_id == self.user_id,
+                        DBMemoryEntry.key == key,
+                    )
+                )
+            )
+            db_entry = result.scalar_one_or_none()
+
+            if not db_entry:
+                return None
+
+            db_entry.access_count += 1
+
+            return MemoryEntry(
+                id=db_entry.id,
+                type=MemoryType(db_entry.type),
+                key=db_entry.key,
+                value=db_entry.value,
+                context=db_entry.context or "",
+                confidence=db_entry.confidence,
+                created_at=db_entry.created_at,
+                updated_at=db_entry.updated_at,
+                access_count=db_entry.access_count,
+                tags=db_entry.tags or [],
+            )
+
+    async def search(
+        self,
+        query: Optional[str] = None,
+        type: Optional[MemoryType] = None,
+        min_confidence: float = 0.0,
+        limit: int = 10,
+    ) -> List[MemoryEntry]:
+        """Search memory entries in PostgreSQL."""
+        from ..db.database import get_session
+        from ..db.models import MemoryEntry as DBMemoryEntry
+        from sqlalchemy import select, or_
+
+        async with get_session() as session:
+            stmt = select(DBMemoryEntry).where(
+                DBMemoryEntry.user_id == self.user_id,
+                DBMemoryEntry.confidence >= min_confidence,
+            )
+
+            if type:
+                stmt = stmt.where(DBMemoryEntry.type == type.value)
+
+            if query:
+                pattern = f"%{query}%"
+                stmt = stmt.where(
+                    or_(
+                        DBMemoryEntry.key.ilike(pattern),
+                        DBMemoryEntry.value.ilike(pattern),
+                        DBMemoryEntry.context.ilike(pattern),
+                    )
+                )
+
+            stmt = stmt.order_by(
+                DBMemoryEntry.confidence.desc(),
+                DBMemoryEntry.access_count.desc(),
+            ).limit(limit)
+
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+
+        return [
+            MemoryEntry(
+                id=r.id,
+                type=MemoryType(r.type),
+                key=r.key,
+                value=r.value,
+                context=r.context or "",
+                confidence=r.confidence,
+                created_at=r.created_at,
+                updated_at=r.updated_at,
+                access_count=r.access_count,
+                tags=r.tags or [],
+            )
+            for r in rows
+        ]
+
+    async def delete(self, key: str) -> bool:
+        """Delete memory entry from PostgreSQL."""
+        from ..db.database import get_session
+        from ..db.models import MemoryEntry as DBMemoryEntry
+        from sqlalchemy import and_, delete
+
+        async with get_session() as session:
+            result = await session.execute(
+                delete(DBMemoryEntry).where(
+                    and_(
+                        DBMemoryEntry.user_id == self.user_id,
+                        DBMemoryEntry.key == key,
+                    )
+                )
+            )
+            deleted = result.rowcount > 0
+
+        if deleted:
+            logger.info("pg_memory_deleted", key=key)
+        return deleted
+
+    async def get_stats(self) -> Dict[str, Any]:
+        """Get memory statistics from PostgreSQL."""
+        from ..db.database import get_session
+        from ..db.models import MemoryEntry as DBMemoryEntry
+        from sqlalchemy import select, func
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    func.count(DBMemoryEntry.id).label("total"),
+                    func.avg(DBMemoryEntry.confidence).label("avg_confidence"),
+                    func.sum(DBMemoryEntry.access_count).label("total_accesses"),
+                ).where(DBMemoryEntry.user_id == self.user_id)
+            )
+            row = result.one()
+
+        return {
+            "total_entries": row.total or 0,
+            "avg_confidence": round(row.avg_confidence or 0, 2),
+            "total_accesses": row.total_accesses or 0,
+        }
+
+
+def create_memory(
+    backend: str = "sqlite",
+    user_id: int = 0,
+    db_path: str = "agent_memory.db",
+) -> PersistentMemory | PostgresMemory:
+    """Factory function to create memory backend.
+
+    Args:
+        backend: "sqlite" or "postgresql"
+        user_id: User ID for PostgreSQL backend
+        db_path: Database path for SQLite backend
+
+    Returns:
+        Memory instance
+    """
+    if backend == "postgresql":
+        return PostgresMemory(user_id=user_id)
+    return PersistentMemory(db_path=db_path)

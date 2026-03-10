@@ -1,0 +1,65 @@
+<div class="auth-wrapper">
+  <div class="auth-card">
+    <h2>{{ isRegisterMode ? 'Create Account' : 'Sign In' }}</h2>
+
+    <div class="error-msg" *ngIf="error">{{ error }}</div>
+
+    <form (ngSubmit)="onSubmit()">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          [(ngModel)]="username"
+          name="username"
+          required
+          autocomplete="username"
+          placeholder="Enter your username"
+        />
+      </div>
+
+      <div class="form-group" *ngIf="isRegisterMode">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          [(ngModel)]="email"
+          name="email"
+          required
+          autocomplete="email"
+          placeholder="Enter your email"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          [(ngModel)]="password"
+          name="password"
+          required
+          autocomplete="current-password"
+          placeholder="Enter your password"
+        />
+      </div>
+
+      <button
+        type="submit"
+        class="btn-submit"
+        [disabled]="loading || !username || !password || (isRegisterMode && !email)"
+      >
+        {{ loading ? 'Please wait...' : (isRegisterMode ? 'Register' : 'Login') }}
+      </button>
+    </form>
+
+    <div class="toggle-link">
+      <span *ngIf="!isRegisterMode">
+        Don't have an account? <a (click)="toggleMode()">Register</a>
+      </span>
+      <span *ngIf="isRegisterMode">
+        Already have an account? <a (click)="toggleMode()">Sign in</a>
+      </span>
+    </div>
+  </div>
+</div>

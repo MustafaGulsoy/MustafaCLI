@@ -1,207 +1,276 @@
 """
-FastAPI Main Application
-=========================
+FastAPI Main Application - v1 API
+==================================
 
 Web API for MustafaCLI with real-time WebSocket streaming.
 
 Features:
-- REST API endpoints
+- Versioned REST API (/api/v1/)
+- JWT Authentication
+- PostgreSQL session persistence
 - WebSocket for real-time agent streaming
 - CORS for Angular frontend
-- Session management
 - Health checks
 
-Author: Mustafa (Kardelen Yazılım)
+Author: Mustafa (Kardelen Yazilim)
 """
+from __future__ import annotations
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from typing import Optional, List, Dict
-import asyncio
-import json
-import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List
 
+import httpx
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+
+from ..auth.dependencies import get_current_user
+from ..auth.routes import router as auth_router
 from ..core.agent import Agent, AgentConfig
 from ..core.providers import create_provider
 from ..core.tools import create_default_tools
-from .sessions import SessionManager
+from ..db.database import close_db, create_tables, init_db
+from ..db.models import User
 from .models import (
+    AgentStatus,
     ChatRequest,
     ChatResponse,
-    SessionInfo,
     HealthResponse,
-    AgentStatus
+    SessionInfo,
 )
+from .sessions import SessionManager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: startup and shutdown."""
+    import os
+
+    db_url = os.getenv(
+        "AGENT_DATABASE_URL",
+        "postgresql+asyncpg://mustafa:password@localhost:5432/mustafacli",
+    )
+    await init_db(db_url)
+    await create_tables()
+    print("MustafaCLI API v0.5.0 started")
+    print("API: http://localhost:8000/docs")
+    print("WebSocket: ws://localhost:8000/ws/{session_id}")
+    yield
+    await close_db()
+    print("MustafaCLI API shutting down...")
+
 
 # Create FastAPI app
 app = FastAPI(
     title="MustafaCLI API",
     description="AI Coding Agent API with real-time streaming",
-    version="0.4.0"
+    version="0.5.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration for Angular
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:4200",  # Angular dev server
-        "http://localhost:8080",  # Alternative port
+        "http://localhost:4200",
+        "http://localhost:8080",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Session manager
+# Session manager (in-memory cache, backed by PostgreSQL)
 session_manager = SessionManager()
 
 # Active WebSocket connections
 active_connections: Dict[str, WebSocket] = {}
 
+# --- Auth Router (no auth required) ---
+app.include_router(auth_router)
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize on startup"""
-    print("🚀 MustafaCLI API starting...")
-    print("📡 WebSocket endpoint: ws://localhost:8000/ws/{session_id}")
-    print("🌐 REST API: http://localhost:8000/docs")
+# --- API v1 Router (auth required) ---
+v1_router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    print("👋 MustafaCLI API shutting down...")
-
-
-@app.get("/", response_model=Dict)
-async def root():
-    """Root endpoint"""
+@app.get("/")
+async def root() -> dict:
+    """Root endpoint."""
     return {
         "name": "MustafaCLI API",
-        "version": "0.4.0",
+        "version": "0.5.0",
         "status": "running",
         "docs": "/docs",
-        "websocket": "/ws/{session_id}"
+        "api": "/api/v1",
+        "websocket": "/ws/{session_id}",
     }
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """Health check endpoint"""
+async def health_check() -> HealthResponse:
+    """Health check endpoint (no auth required)."""
     try:
-        # Check Ollama
-        import httpx
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:11434/api/tags", timeout=2)
+            response = await client.get(
+                "http://localhost:11434/api/tags", timeout=2
+            )
             ollama_status = response.status_code == 200
-    except:
+    except Exception:
         ollama_status = False
 
-    # Check RAG
-    rag_db_path = Path(".rag_db")
-    rag_status = rag_db_path.exists()
+    rag_status = Path(".rag_db").exists()
 
     return HealthResponse(
         status="healthy" if ollama_status else "degraded",
         ollama_connected=ollama_status,
         rag_available=rag_status,
         active_sessions=len(session_manager.sessions),
-        timestamp=datetime.now()
+        timestamp=datetime.now(),
     )
 
 
-@app.post("/api/sessions", response_model=SessionInfo)
+# --- Session endpoints ---
+
+
+@v1_router.post("/sessions", response_model=SessionInfo, status_code=201)
 async def create_session(
     working_dir: str = ".",
-    enable_rag: bool = False
-):
-    """Create new agent session"""
+    enable_rag: bool = False,
+    user: User = Depends(get_current_user),
+) -> SessionInfo:
+    """Create new agent session."""
     try:
         session = await session_manager.create_session(
             working_dir=working_dir,
-            enable_rag=enable_rag
+            enable_rag=enable_rag,
+            user_id=user.id,
         )
         return session.to_info()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/sessions", response_model=List[SessionInfo])
-async def list_sessions():
-    """List all active sessions"""
+@v1_router.get("/sessions", response_model=List[SessionInfo])
+async def list_sessions(
+    user: User = Depends(get_current_user),
+) -> list[SessionInfo]:
+    """List user's active sessions."""
     return [
-        session.to_info()
-        for session in session_manager.sessions.values()
+        s.to_info()
+        for s in session_manager.sessions.values()
+        if s.user_id == user.id
     ]
 
 
-@app.get("/api/sessions/{session_id}", response_model=SessionInfo)
-async def get_session(session_id: str):
-    """Get session info"""
+@v1_router.get("/sessions/{session_id}", response_model=SessionInfo)
+async def get_session(
+    session_id: str,
+    user: User = Depends(get_current_user),
+) -> SessionInfo:
+    """Get session info."""
     session = session_manager.get_session(session_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
     return session.to_info()
 
 
-@app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
-    """Delete session"""
+@v1_router.delete("/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Delete session."""
+    session = session_manager.get_session(session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
     success = await session_manager.delete_session(session_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=500, detail="Failed to delete session")
     return {"status": "deleted", "session_id": session_id}
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """
-    Send message to agent (non-streaming)
+# --- Chat endpoint ---
 
-    For streaming, use WebSocket endpoint instead.
-    """
+
+@v1_router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    user: User = Depends(get_current_user),
+) -> ChatResponse:
+    """Send message to agent (non-streaming). Use WebSocket for streaming."""
     session = session_manager.get_session(request.session_id)
-    if not session:
+    if not session or session.user_id != user.id:
         raise HTTPException(status_code=404, detail="Session not found")
 
     try:
-        # Run agent (collect all responses)
         responses = []
         async for response in session.agent.run(request.message):
             responses.append(response)
 
-        # Return final response
         final = responses[-1] if responses else None
-        if final:
-            return ChatResponse(
-                content=final.content,
-                state=final.state.value,
-                iteration=final.iteration,
-                tool_calls=final.tool_calls or [],
-                tool_results=[
-                    {
-                        "name": tr.get("name", ""),
-                        "success": tr.get("success", False),
-                        "output": tr.get("output", "")
-                    }
-                    for tr in (final.tool_results or [])
-                ]
-            )
-        else:
+        if not final:
             raise HTTPException(status_code=500, detail="No response from agent")
 
+        return ChatResponse(
+            content=final.content,
+            state=final.state.value,
+            iteration=final.iteration,
+            tool_calls=final.tool_calls or [],
+            tool_results=[
+                {
+                    "name": tr.get("name", ""),
+                    "success": tr.get("success", False),
+                    "output": tr.get("output", ""),
+                }
+                for tr in (final.tool_results or [])
+            ],
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- Status endpoint ---
+
+
+@v1_router.get("/status", response_model=AgentStatus)
+async def get_agent_status(
+    session_id: str,
+    user: User = Depends(get_current_user),
+) -> AgentStatus:
+    """Get current agent status."""
+    session = session_manager.get_session(session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return AgentStatus(
+        state=session.agent.state.value,
+        current_iteration=session.agent.current_iteration,
+        max_iterations=session.agent.config.max_iterations,
+    )
+
+
+# Include v1 router
+app.include_router(v1_router)
+
+
+# --- WebSocket (token auth via query param) ---
+
+
 @app.websocket("/ws/{session_id}")
-async def websocket_endpoint(websocket: WebSocket, session_id: str):
-    """
-    WebSocket endpoint for real-time streaming
+async def websocket_endpoint(websocket: WebSocket, session_id: str) -> None:
+    """WebSocket endpoint for real-time streaming.
+
+    Authentication: pass token as query param ?token=<jwt>
 
     Protocol:
     - Client sends: {"type": "message", "content": "..."}
@@ -209,130 +278,110 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     - Server sends: {"type": "complete", "data": {...}}
     - Server sends: {"type": "error", "error": "..."}
     """
+    # Authenticate via query param
+    token = websocket.query_params.get("token")
+    if token:
+        from ..auth.jwt_handler import decode_token
+
+        payload = decode_token(token)
+        if not payload:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+    # Allow unauthenticated WebSocket for backward compatibility
+
     await websocket.accept()
     active_connections[session_id] = websocket
 
     try:
-        # Get or create session
         session = session_manager.get_session(session_id)
         if not session:
-            await websocket.send_json({
-                "type": "error",
-                "error": "Session not found. Create session first."
-            })
+            await websocket.send_json(
+                {"type": "error", "error": "Session not found. Create session first."}
+            )
             await websocket.close()
             return
 
-        # Send welcome message
-        await websocket.send_json({
-            "type": "connected",
-            "session_id": session_id,
-            "working_dir": session.working_dir,
-            "rag_enabled": session.rag_enabled
-        })
+        await websocket.send_json(
+            {
+                "type": "connected",
+                "session_id": session_id,
+                "working_dir": session.working_dir,
+                "rag_enabled": session.rag_enabled,
+            }
+        )
 
-        # Listen for messages
         while True:
-            # Receive message from client
             data = await websocket.receive_json()
 
             if data.get("type") == "message":
                 message = data.get("content", "")
-
                 if not message:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Empty message"
-                    })
+                    await websocket.send_json(
+                        {"type": "error", "error": "Empty message"}
+                    )
                     continue
 
-                # Run agent and stream responses
                 try:
                     async for response in session.agent.run(message):
-                        # Send each response chunk
-                        await websocket.send_json({
-                            "type": "response",
-                            "data": {
-                                "content": response.content,
-                                "state": response.state.value,
-                                "iteration": response.iteration,
-                                "tool_calls": response.tool_calls or [],
-                                "tool_results": [
-                                    {
-                                        "name": tr.get("name", ""),
-                                        "success": tr.get("success", False),
-                                        "output": tr.get("output", "")[:500]  # Truncate
-                                    }
-                                    for tr in (response.tool_results or [])
-                                ]
-                            }
-                        })
-
-                        # If completed, send complete message
-                        if response.state.value == "completed":
-                            await websocket.send_json({
-                                "type": "complete",
+                        await websocket.send_json(
+                            {
+                                "type": "response",
                                 "data": {
-                                    "iterations": response.iteration,
-                                    "duration_ms": response.duration_ms
-                                }
-                            })
+                                    "content": response.content,
+                                    "state": response.state.value,
+                                    "iteration": response.iteration,
+                                    "tool_calls": response.tool_calls or [],
+                                    "tool_results": [
+                                        {
+                                            "name": tr.get("name", ""),
+                                            "success": tr.get("success", False),
+                                            "output": tr.get("output", "")[:500],
+                                        }
+                                        for tr in (response.tool_results or [])
+                                    ],
+                                },
+                            }
+                        )
 
+                        if response.state.value == "completed":
+                            await websocket.send_json(
+                                {
+                                    "type": "complete",
+                                    "data": {
+                                        "iterations": response.iteration,
+                                        "duration_ms": response.duration_ms,
+                                    },
+                                }
+                            )
                 except Exception as e:
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": str(e)
-                    })
+                    await websocket.send_json({"type": "error", "error": str(e)})
 
             elif data.get("type") == "ping":
-                # Keep-alive
                 await websocket.send_json({"type": "pong"})
 
             elif data.get("type") == "cancel":
-                # Cancel current operation
-                await websocket.send_json({
-                    "type": "cancelled"
-                })
+                await websocket.send_json({"type": "cancelled"})
                 break
 
     except WebSocketDisconnect:
-        print(f"Client disconnected: {session_id}")
+        pass
     except Exception as e:
-        print(f"WebSocket error: {e}")
         try:
-            await websocket.send_json({
-                "type": "error",
-                "error": str(e)
-            })
-        except:
+            await websocket.send_json({"type": "error", "error": str(e)})
+        except Exception:
             pass
     finally:
-        # Cleanup
-        if session_id in active_connections:
-            del active_connections[session_id]
-
-
-@app.get("/api/status", response_model=AgentStatus)
-async def get_agent_status(session_id: str):
-    """Get current agent status"""
-    session = session_manager.get_session(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    return AgentStatus(
-        state=session.agent.state.value,
-        current_iteration=session.agent.current_iteration,
-        max_iterations=session.agent.config.max_iterations
-    )
+        active_connections.pop(session_id, None)
 
 
 # Run with: uvicorn src.api.main:app --reload --port 8000
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "src.api.main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
-        log_level="info"
+        log_level="info",
     )

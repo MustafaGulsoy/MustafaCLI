@@ -511,15 +511,90 @@ alembic upgrade head
         self._skills[skill.name] = skill
 
 
-# Default skill'leri yükleyen factory function
-def create_skill_registry(skills_dir: Optional[str] = None) -> SkillRegistry:
+class PluginAwareSkillRegistry(SkillRegistry):
+    """
+    Plugin-aware skill registry.
+
+    Extends SkillRegistry to integrate with the plugin system:
+    - Plugin tools are auto-registered as skills
+    - SKILL.md files from plugin directories are loaded
+    - Plugin hooks are forwarded to skills
+    """
+
+    def __init__(
+        self,
+        skills_dir: Optional[str] = None,
+        plugin_registry: Optional[object] = None,
+    ):
+        super().__init__(skills_dir)
+        self._plugin_registry = plugin_registry
+
+    def load_plugin_skills(self) -> int:
+        """Load skills from plugin registry.
+
+        Returns:
+            Number of plugin skills loaded
+        """
+        if not self._plugin_registry:
+            return 0
+
+        count = 0
+        try:
+            # Register plugin tools as skills
+            for tool in self._plugin_registry.get_all_tools():
+                skill = Skill(
+                    name=f"plugin:{tool.name}",
+                    description=tool.description,
+                    content=f"Plugin tool: {tool.name}\n\n{tool.description}",
+                    triggers=[tool.name],
+                    priority=2,
+                )
+                self._skills[skill.name] = skill
+                count += 1
+
+            # Load SKILL.md files from plugin directories
+            for plugin_name in self._plugin_registry.list_plugins():
+                plugin = self._plugin_registry.get_plugin(plugin_name)
+                if plugin and hasattr(plugin, "metadata"):
+                    # Check for skill files in plugin package dir
+                    import inspect
+                    plugin_dir = Path(inspect.getfile(type(plugin))).parent
+                    for skill_file in plugin_dir.glob("skills/**/*.md"):
+                        try:
+                            skill = Skill.from_file(str(skill_file))
+                            skill.name = f"{plugin_name}:{skill.name}"
+                            self._skills[skill.name] = skill
+                            count += 1
+                        except Exception:
+                            pass
+
+        except Exception:
+            pass
+
+        return count
+
+    def set_plugin_registry(self, registry: object) -> None:
+        """Set or update the plugin registry."""
+        self._plugin_registry = registry
+        self.load_plugin_skills()
+
+
+def create_skill_registry(
+    skills_dir: Optional[str] = None,
+    plugin_registry: Optional[object] = None,
+) -> SkillRegistry:
     """
     Skill registry oluştur
-    
+
     Args:
         skills_dir: Custom skill dizini (optional)
-        
+        plugin_registry: Plugin registry for plugin-aware skills
+
     Returns:
-        SkillRegistry instance
+        SkillRegistry or PluginAwareSkillRegistry instance
     """
+    if plugin_registry:
+        registry = PluginAwareSkillRegistry(skills_dir, plugin_registry)
+        registry.load_plugin_skills()
+        return registry
     return SkillRegistry(skills_dir)

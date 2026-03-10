@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: mustafacli-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: mustafacli
+      POSTGRES_USER: mustafa
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mustafa -d mustafacli"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # Ollama service (local LLM)
   ollama:
     image: ollama/ollama:latest
@@ -21,22 +40,27 @@ services:
       timeout: 10s
       retries: 3
 
-  # MustafaCLI Agent
+  # MustafaCLI Agent API
   agent:
     build:
       context: ..
       dockerfile: deployment/Dockerfile
     container_name: mustafacli-agent
     depends_on:
-      - ollama
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
     ports:
-      - "8000:8000"  # Metrics port
+      - "8000:8000"
     environment:
       - AGENT_MODEL_NAME=qwen2.5-coder:32b
       - AGENT_WORKING_DIR=/workspace
       - AGENT_LOG_LEVEL=INFO
       - AGENT_ENABLE_METRICS=true
       - AGENT_ALLOW_DANGEROUS_COMMANDS=false
+      - AGENT_DATABASE_URL=postgresql+asyncpg://mustafa:password@postgres:5432/mustafacli
+      - AGENT_JWT_SECRET=change-me-in-production-please
       - PROVIDER_TYPE=ollama
       - PROVIDER_OLLAMA_URL=http://ollama:11434
     volumes:
@@ -51,7 +75,7 @@ services:
           cpus: '2'
           memory: 2G
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -84,6 +108,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   ollama-data:
   workspace:
   logs:

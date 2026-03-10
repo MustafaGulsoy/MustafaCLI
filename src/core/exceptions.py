@@ -240,3 +240,41 @@ class ValidationError(AgentError):
         super().__init__(message, details)
         self.field = field
         self.value = value
+
+
+class AuthenticationError(AgentError):
+    """Authentication-related errors (login, token, permissions)."""
+
+    pass
+
+
+class PluginError(AgentError):
+    """Plugin system errors (loading, initialization, execution)."""
+
+    def __init__(
+        self,
+        message: str,
+        plugin_name: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.plugin_name = plugin_name
+
+
+class MCPError(AgentError):
+    """MCP (Model Context Protocol) errors."""
+
+    def __init__(
+        self,
+        message: str,
+        method: Optional[str] = None,
+        details: Optional[dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.method = method
+
+
+class DatabaseError(AgentError):
+    """Database connection and query errors."""
+
+    pass
