@@ -5,13 +5,10 @@ import logging
 from datetime import datetime
 
 from ...core.graph_models import (
-    AnalysisResult,
-    AnalysisStatus,
-    PinDirection,
-    Severity,
-    Violation,
+    AnalysisResult, AnalysisStatus, Component, ComponentType,
+    Pin, PinDirection, Severity, Violation,
 )
-from ...core.graph_ops import GraphOperations
+from ...core.mcp_bridge import McpBridge
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +19,42 @@ DEFAULT_MIN_MARGIN = 0.20  # 20%
 class PowerBudgetAnalyzer:
     """Analyze power budget and margins for satellite subsystems."""
 
-    def __init__(self, graph: GraphOperations, derating_factor: float = 0.75) -> None:
-        self._graph = graph
+    def __init__(self, bridge: McpBridge, derating_factor: float = 0.75) -> None:
+        self._bridge = bridge
         self._derating_factor = derating_factor
+
+    async def _get_components_by_subsystem(self, subsystem: str) -> list[Component]:
+        """Get components in a subsystem via Cypher."""
+        result = await self._bridge.neo4j_query(
+            "MATCH (c:Component {subsystem: $subsystem}) RETURN c",
+            {"subsystem": subsystem},
+        )
+        return [
+            Component(
+                id=r["c"]["id"], name=r["c"]["name"],
+                type=ComponentType(r["c"]["type"]),
+                subsystem=r["c"]["subsystem"],
+            )
+            for r in result
+        ]
+
+    async def _get_pins(self, component_id: str) -> list[Pin]:
+        """Get pins for a component via Cypher."""
+        result = await self._bridge.neo4j_query(
+            "MATCH (c:Component {id: $comp_id})-[:HAS_PIN]->(p:Pin) RETURN p",
+            {"comp_id": component_id},
+        )
+        return [
+            Pin(
+                id=r["p"]["id"], name=r["p"]["name"],
+                direction=PinDirection(r["p"]["direction"]),
+                component_id=component_id,
+                voltage=r["p"].get("voltage"),
+                current_max=r["p"].get("current_max"),
+                actual_current=r["p"].get("actual_current"),
+            )
+            for r in result
+        ]
 
     async def analyze(self, subsystem: str | None = None) -> AnalysisResult:
         """Run power budget analysis.
@@ -38,17 +68,14 @@ class PowerBudgetAnalyzer:
         rails: list[dict] = []
 
         # Get all components (or filter by subsystem)
-        if subsystem:
-            components = await self._graph.get_components_by_subsystem(subsystem)
-        else:
-            components = await self._graph.get_components_by_subsystem("EPS")
+        components = await self._get_components_by_subsystem(subsystem or "EPS")
 
         # Analyze each component's power pins
         total_supply = 0.0
         total_consumption = 0.0
 
         for comp in components:
-            pins = await self._graph.get_pins(comp.id)
+            pins = await self._get_pins(comp.id)
 
             for pin in pins:
                 if pin.direction != PinDirection.POWER:

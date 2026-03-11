@@ -10,7 +10,7 @@ from ...core.graph_models import (
     Severity,
     Violation,
 )
-from ...core.graph_ops import GraphOperations
+from ...core.mcp_bridge import McpBridge
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 class ConnectorAnalyzer:
     """Analyze connector derating, matching, and ECSS compliance."""
 
-    def __init__(self, graph: GraphOperations, derating_factor: float = 0.75) -> None:
-        self._graph = graph
+    def __init__(self, bridge: McpBridge, derating_factor: float = 0.75) -> None:
+        self._bridge = bridge
         self._derating_factor = derating_factor
 
     async def check(self, subsystem: str | None = None) -> AnalysisResult:
@@ -37,25 +37,25 @@ class ConnectorAnalyzer:
         # Get connectors via Cypher
         query = "MATCH (c:Connector) RETURN c"
         if subsystem:
-            query = """
-            MATCH (c:Connector)-[:HAS_PIN]->(:Pin)<-[:HAS_PIN]-(comp:Component {subsystem: $subsystem})
-            RETURN DISTINCT c
-            """
+            query = (
+                "MATCH (c:Connector)-[:HAS_PIN]->(:Pin)<-[:HAS_PIN]-(comp:Component {subsystem: $subsystem}) "
+                "RETURN DISTINCT c"
+            )
 
         try:
-            connectors_data = await self._graph._client.execute(
+            await self._bridge.neo4j_query(
                 query, {"subsystem": subsystem} if subsystem else {}
             )
         except Exception:
-            connectors_data = []
+            pass
 
         # Check mated pairs
-        mate_query = """
-        MATCH (c1:Connector)-[:MATES_WITH]->(c2:Connector)
-        RETURN c1, c2
-        """
+        mate_query = (
+            "MATCH (c1:Connector)-[:MATES_WITH]->(c2:Connector) "
+            "RETURN c1, c2"
+        )
         try:
-            mate_pairs = await self._graph._client.execute(mate_query)
+            mate_pairs = await self._bridge.neo4j_query(mate_query)
         except Exception:
             mate_pairs = []
 
@@ -101,14 +101,13 @@ class ConnectorAnalyzer:
             c1_rating = c1.get("current_rating", 0)
             if c1_rating > 0:
                 derated_max = c1_rating * self._derating_factor
-                # Check actual current through connector pins
-                pin_query = """
-                MATCH (c:Connector {id: $conn_id})-[:HAS_PIN]->(p:Pin)
-                WHERE p.actual_current IS NOT NULL
-                RETURN max(p.actual_current) AS max_current
-                """
+                pin_query = (
+                    "MATCH (c:Connector {id: $conn_id})-[:HAS_PIN]->(p:Pin) "
+                    "WHERE p.actual_current IS NOT NULL "
+                    "RETURN max(p.actual_current) AS max_current"
+                )
                 try:
-                    current_result = await self._graph._client.execute(
+                    current_result = await self._bridge.neo4j_query(
                         pin_query, {"conn_id": c1.get("id", "")}
                     )
                     if current_result and current_result[0].get("max_current"):

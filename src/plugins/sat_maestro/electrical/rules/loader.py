@@ -6,8 +6,11 @@ import logging
 import operator
 from typing import Any
 
-from ...core.graph_models import EcssRule, Severity, Violation
-from ...core.graph_ops import GraphOperations
+from ...core.graph_models import (
+    Component, ComponentType, EcssRule, Pin, PinDirection,
+    Severity, Violation,
+)
+from ...core.mcp_bridge import McpBridge
 
 logger = logging.getLogger(__name__)
 
@@ -84,15 +87,33 @@ class SafeExpressionEvaluator:
 
 
 class RuleEngine:
-    """Load and evaluate ECSS rules from Neo4j."""
+    """Load and evaluate ECSS rules from Neo4j via MCP bridge."""
 
-    def __init__(self, graph: GraphOperations) -> None:
-        self._graph = graph
+    def __init__(self, bridge: McpBridge) -> None:
+        self._bridge = bridge
         self._evaluator = SafeExpressionEvaluator()
 
     async def load_rules(self, category: str | None = None) -> list[EcssRule]:
         """Load rules from Neo4j, optionally filtered by category."""
-        return await self._graph.get_ecss_rules(category)
+        if category:
+            query = "MATCH (r:EcssRule {category: $category}) RETURN r"
+            result = await self._bridge.neo4j_query(query, {"category": category})
+        else:
+            query = "MATCH (r:EcssRule) RETURN r"
+            result = await self._bridge.neo4j_query(query)
+
+        return [
+            EcssRule(
+                id=r["r"]["id"],
+                standard=r["r"]["standard"],
+                clause=r["r"]["clause"],
+                severity=Severity(r["r"]["severity"]),
+                category=r["r"]["category"],
+                check_expression=r["r"]["check_expression"],
+                message_template=r["r"]["message_template"],
+            )
+            for r in result
+        ]
 
     async def evaluate_rule(self, rule: EcssRule, context: dict[str, Any]) -> Violation | None:
         """Evaluate a single rule against a context. Returns Violation if rule fails."""
@@ -121,28 +142,45 @@ class RuleEngine:
 
         # Get components to check
         if subsystem:
-            components = await self._graph.get_components_by_subsystem(subsystem)
+            result = await self._bridge.neo4j_query(
+                "MATCH (c:Component {subsystem: $subsystem}) RETURN c",
+                {"subsystem": subsystem},
+            )
         else:
-            # Get all components
             try:
-                result = await self._graph._client.execute(
+                result = await self._bridge.neo4j_query(
                     "MATCH (c:Component) RETURN c"
                 )
-                from ...core.graph_models import Component, ComponentType
-                components = [
-                    Component(
-                        id=r["c"]["id"],
-                        name=r["c"]["name"],
-                        type=ComponentType(r["c"]["type"]),
-                        subsystem=r["c"].get("subsystem", ""),
-                    )
-                    for r in result
-                ]
             except Exception:
-                components = []
+                result = []
+
+        components = [
+            Component(
+                id=r["c"]["id"],
+                name=r["c"]["name"],
+                type=ComponentType(r["c"]["type"]),
+                subsystem=r["c"].get("subsystem", ""),
+            )
+            for r in result
+        ]
 
         for comp in components:
-            pins = await self._graph.get_pins(comp.id)
+            pin_result = await self._bridge.neo4j_query(
+                "MATCH (c:Component {id: $comp_id})-[:HAS_PIN]->(p:Pin) RETURN p",
+                {"comp_id": comp.id},
+            )
+            pins = [
+                Pin(
+                    id=r["p"]["id"], name=r["p"]["name"],
+                    direction=PinDirection(r["p"]["direction"]),
+                    component_id=comp.id,
+                    voltage=r["p"].get("voltage"),
+                    current_max=r["p"].get("current_max"),
+                    actual_current=r["p"].get("actual_current"),
+                )
+                for r in pin_result
+            ]
+
             for rule in rules:
                 # Build context for each component
                 for pin in pins:

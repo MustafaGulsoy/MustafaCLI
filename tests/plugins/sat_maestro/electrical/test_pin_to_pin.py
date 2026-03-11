@@ -10,28 +10,23 @@ from src.plugins.sat_maestro.core.graph_models import (
     PinDirection,
     Severity,
 )
-from src.plugins.sat_maestro.core.graph_ops import GraphOperations
+from src.plugins.sat_maestro.core.mcp_bridge import McpBridge
 from src.plugins.sat_maestro.electrical.analyzers.pin_to_pin import PinToPinAnalyzer
 
 
 @pytest.fixture
-def mock_graph(mock_neo4j_client):
-    return GraphOperations(mock_neo4j_client)
-
-
-@pytest.fixture
-def analyzer(mock_graph):
-    return PinToPinAnalyzer(mock_graph)
+def analyzer(mock_bridge):
+    return PinToPinAnalyzer(mock_bridge)
 
 
 class TestPinToPinAnalyzer:
     @pytest.mark.asyncio
-    async def test_all_connections_valid(self, analyzer, mock_graph):
-        mock_graph.get_all_connections = AsyncMock(return_value=[
-            {"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"},
-        ])
-        mock_graph.find_path = AsyncMock(return_value=[
-            {"node_ids": ["P1", "P2"], "nets": ["NET1"]}
+    async def test_all_connections_valid(self, analyzer, mock_bridge):
+        mock_bridge.neo4j_query = AsyncMock(side_effect=[
+            # _get_all_connections
+            [{"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"}],
+            # _find_path
+            [{"node_ids": ["P1", "P2"], "nets": ["NET1"]}],
         ])
 
         result = await analyzer.verify()
@@ -40,11 +35,13 @@ class TestPinToPinAnalyzer:
         assert result.summary["open_circuits"] == 0
 
     @pytest.mark.asyncio
-    async def test_open_circuit_detected(self, analyzer, mock_graph):
-        mock_graph.get_all_connections = AsyncMock(return_value=[
-            {"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"},
+    async def test_open_circuit_detected(self, analyzer, mock_bridge):
+        mock_bridge.neo4j_query = AsyncMock(side_effect=[
+            # _get_all_connections
+            [{"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"}],
+            # _find_path
+            [],
         ])
-        mock_graph.find_path = AsyncMock(return_value=[])
 
         result = await analyzer.verify()
         assert result.status == AnalysisStatus.FAIL
@@ -54,20 +51,24 @@ class TestPinToPinAnalyzer:
         assert result.violations[0].severity == Severity.ERROR
 
     @pytest.mark.asyncio
-    async def test_no_connections(self, analyzer, mock_graph):
-        mock_graph.get_all_connections = AsyncMock(return_value=[])
+    async def test_no_connections(self, analyzer, mock_bridge):
+        mock_bridge.neo4j_query = AsyncMock(return_value=[])
         result = await analyzer.verify()
         assert result.status == AnalysisStatus.PASS
         assert result.summary["connections_checked"] == 0
 
     @pytest.mark.asyncio
-    async def test_multiple_open_circuits(self, analyzer, mock_graph):
-        mock_graph.get_all_connections = AsyncMock(return_value=[
-            {"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"},
-            {"from_pin": "P3", "to_pin": "P4", "net_name": "NET2"},
-            {"from_pin": "P5", "to_pin": "P6", "net_name": "NET3"},
+    async def test_multiple_open_circuits(self, analyzer, mock_bridge):
+        mock_bridge.neo4j_query = AsyncMock(side_effect=[
+            # _get_all_connections
+            [
+                {"from_pin": "P1", "to_pin": "P2", "net_name": "NET1"},
+                {"from_pin": "P3", "to_pin": "P4", "net_name": "NET2"},
+                {"from_pin": "P5", "to_pin": "P6", "net_name": "NET3"},
+            ],
+            # _find_path for each (all empty = open)
+            [], [], [],
         ])
-        mock_graph.find_path = AsyncMock(return_value=[])
 
         result = await analyzer.verify()
         assert result.status == AnalysisStatus.FAIL
@@ -75,8 +76,12 @@ class TestPinToPinAnalyzer:
         assert len(result.violations) == 3
 
     @pytest.mark.asyncio
-    async def test_subsystem_filter(self, analyzer, mock_graph):
-        mock_graph.get_all_connections = AsyncMock(return_value=[])
-        mock_graph.get_components_by_subsystem = AsyncMock(return_value=[])
+    async def test_subsystem_filter(self, analyzer, mock_bridge):
+        mock_bridge.neo4j_query = AsyncMock(side_effect=[
+            # _get_all_connections
+            [],
+            # _get_components_by_subsystem
+            [],
+        ])
         result = await analyzer.verify(subsystem="EPS")
         assert result.metadata["subsystem"] == "EPS"

@@ -71,9 +71,13 @@ class TestSeedRules:
     def test_default_rules_valid(self):
         from src.plugins.sat_maestro.db.seed_rules import DEFAULT_ECSS_RULES
         assert len(DEFAULT_ECSS_RULES) >= 15
+        valid_standards = {
+            "ECSS-E-ST-20C", "ECSS-E-ST-32C", "ECSS-E-ST-31C",
+            "ECSS-E-ST-33C", "ECSS-E-HB-32-26A",
+        }
         for rule in DEFAULT_ECSS_RULES:
             assert rule.id.startswith("ECSS-")
-            assert rule.standard == "ECSS-E-ST-20C"
+            assert rule.standard in valid_standards
             assert rule.severity in [Severity.ERROR, Severity.WARNING, Severity.INFO]
             assert rule.check_expression
             assert rule.message_template
@@ -81,8 +85,15 @@ class TestSeedRules:
     def test_rule_categories(self):
         from src.plugins.sat_maestro.db.seed_rules import DEFAULT_ECSS_RULES
         categories = {r.category for r in DEFAULT_ECSS_RULES}
+        # Electrical categories
         assert "connector" in categories
         assert "power" in categories
         assert "wire" in categories
         assert "grounding" in categories
         assert "emc" in categories
+        # Mechanical categories
+        assert "mass" in categories
+        assert "structural_strength" in categories
+        assert "thermal_limit" in categories
+        assert "deployment" in categories
+        assert "modal" in categories

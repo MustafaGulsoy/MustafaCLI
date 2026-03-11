@@ -7,8 +7,7 @@ from typing import Any
 
 from ..config import SatMaestroConfig
 from ..core.graph_models import AnalysisResult, AnalysisStatus
-from ..core.graph_ops import GraphOperations
-from ..core.neo4j_client import Neo4jClient
+from ..core.mcp_bridge import McpBridge
 from ..core.report import ReportFormat, ReportGenerator
 from .analyzers.pin_to_pin import PinToPinAnalyzer
 from .analyzers.power_budget import PowerBudgetAnalyzer
@@ -25,16 +24,16 @@ class ElectricalAgent:
     comprehensive electrical verification.
     """
 
-    def __init__(self, neo4j: Neo4jClient, config: SatMaestroConfig) -> None:
-        self._graph = GraphOperations(neo4j)
+    def __init__(self, bridge: McpBridge, config: SatMaestroConfig) -> None:
+        self._bridge = bridge
         self._config = config
         self._report = ReportGenerator(config)
 
         # Initialize analyzers
-        self.pin_to_pin = PinToPinAnalyzer(self._graph)
-        self.power_budget = PowerBudgetAnalyzer(self._graph, config.derating_factor)
-        self.connector = ConnectorAnalyzer(self._graph, config.derating_factor)
-        self.rule_engine = RuleEngine(self._graph)
+        self.pin_to_pin = PinToPinAnalyzer(self._bridge)
+        self.power_budget = PowerBudgetAnalyzer(self._bridge, config.derating_factor)
+        self.connector = ConnectorAnalyzer(self._bridge, config.derating_factor)
+        self.rule_engine = RuleEngine(self._bridge)
 
     async def run_full_analysis(
         self,
@@ -113,16 +112,40 @@ class ElectricalAgent:
         run_id = datetime.now().strftime("%Y-%m-%d-%H%M%S")
         report_output = await self._report.generate(results, report_format, run_id=run_id)
 
-        # Store results in Neo4j
+        # Store results in Neo4j via MCP bridge
         try:
             for result in results:
-                await self._graph.store_analysis_run(result, f"{run_id}-{result.analyzer}")
+                store_id = f"{run_id}-{result.analyzer}"
+                await self._bridge.neo4j_write(
+                    "CREATE (run:AnalysisRun {id: $id, analyzer: $analyzer, "
+                    "status: $status, timestamp: $timestamp}) RETURN run.id AS id",
+                    {
+                        "id": store_id,
+                        "analyzer": result.analyzer,
+                        "status": result.status.value,
+                        "timestamp": result.timestamp.isoformat(),
+                    },
+                )
+                for v in result.violations:
+                    await self._bridge.neo4j_write(
+                        "MATCH (run:AnalysisRun {id: $run_id}) "
+                        "CREATE (v:Violation {rule_id: $rule_id, severity: $severity, "
+                        "message: $message, component_path: $component_path}) "
+                        "CREATE (run)-[:FOUND]->(v)",
+                        {
+                            "run_id": store_id,
+                            "rule_id": v.rule_id,
+                            "severity": v.severity.value,
+                            "message": v.message,
+                            "component_path": v.component_path,
+                        },
+                    )
         except Exception as e:
             logger.warning("Could not store analysis run in Neo4j: %s", e)
 
         return results, report_output
 
     @property
-    def graph(self) -> GraphOperations:
-        """Access graph operations for direct queries."""
-        return self._graph
+    def bridge(self) -> McpBridge:
+        """Access MCP bridge for direct queries."""
+        return self._bridge
