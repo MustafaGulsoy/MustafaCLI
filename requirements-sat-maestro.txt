@@ -7,4 +7,3 @@ PyMuPDF==1.25.3
 # Mechanical analysis dependencies
 mcp>=1.0.0
 numpy>=1.24.0
-pyNastran>=1.4.1
