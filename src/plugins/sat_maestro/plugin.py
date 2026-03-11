@@ -28,11 +28,11 @@ class SatMaestroPlugin(PluginBase):
     def metadata(self) -> PluginMetadata:
         return PluginMetadata(
             name="sat-maestro",
-            version="0.1.0",
-            description="Satellite Engineering Analysis - Electrical Agent",
+            version="0.2.0",
+            description="Satellite Engineering Analysis - Electrical & Mechanical Agents",
             author="Kardelen Yazilim",
-            requires=["neo4j", "pygerber", "sexpdata", "jinja2"],
-            tags=["satellite", "electrical", "ecss", "engineering"],
+            requires=["neo4j", "pygerber", "sexpdata", "jinja2", "mcp", "numpy"],
+            tags=["satellite", "electrical", "mechanical", "ecss", "engineering"],
             homepage="https://github.com/kardelenyazilim/sat-maestro",
             license="MIT",
         )
@@ -622,6 +622,25 @@ class SatMaestroPlugin(PluginBase):
             return ToolResult(
                 success=True,
                 output=json.dumps({"cross_discipline_results": results}, indent=2),
+            )
+        except Exception as e:
+            return ToolResult(success=False, output="", error=str(e))
+
+    @plugin_tool(
+        name="sat_power_thermal_map",
+        description="Map electrical power dissipation to thermal nodes",
+    )
+    async def power_thermal_map(self, subsystem: str = "") -> ToolResult:
+        """Check power-to-thermal mapping consistency."""
+        if err := self._check_connected():
+            return err
+        try:
+            from .cross_discipline.electrical_thermal import ElectricalThermalAnalyzer
+            analyzer = ElectricalThermalAnalyzer(self._bridge)
+            result = await analyzer.analyze()
+            return ToolResult(
+                success=result.status.value != "FAIL",
+                output=json.dumps({"status": result.status.value, **result.summary}, indent=2, default=str),
             )
         except Exception as e:
             return ToolResult(success=False, output="", error=str(e))
