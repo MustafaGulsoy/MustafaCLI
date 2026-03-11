@@ -13,7 +13,7 @@ class TestSatMaestroPlugin:
     def test_metadata(self, plugin):
         meta = plugin.metadata
         assert meta.name == "sat-maestro"
-        assert meta.version == "0.1.0"
+        assert meta.version == "0.2.0"
         assert "satellite" in meta.tags
         assert "neo4j" in meta.requires
 
