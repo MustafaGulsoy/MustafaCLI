@@ -4,3 +4,7 @@ pygerber==3.0.3
 sexpdata==1.0.2
 jinja2==3.1.4
 PyMuPDF==1.25.3
+# Mechanical analysis dependencies
+mcp>=1.0.0
+numpy>=1.24.0
+pyNastran>=1.4.1

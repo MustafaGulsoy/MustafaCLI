@@ -19,6 +19,11 @@ class SatMaestroConfig:
     derating_factor: float = 0.75  # ECSS default connector derating
     ollama_url: str = "http://localhost:11434"
     vision_model: str = "llava:13b"  # Ollama vision model
+    # Mechanical analysis config
+    mass_margin: float = 0.20  # 20% system-level mass margin
+    freecad_mcp_command: str = "python -m freecad_mcp"
+    calculix_path: str = "ccx"  # CalculiX executable path
+    gmsh_mcp_command: str = "python -m sat_maestro_gmsh_mcp"
 
     @classmethod
     def from_env(cls) -> SatMaestroConfig:
@@ -34,4 +39,8 @@ class SatMaestroConfig:
             derating_factor=float(os.getenv("SAT_MAESTRO_DERATING_FACTOR", "0.75")),
             ollama_url=os.getenv("SAT_MAESTRO_OLLAMA_URL", "http://localhost:11434"),
             vision_model=os.getenv("SAT_MAESTRO_VISION_MODEL", "llava:13b"),
+            mass_margin=float(os.getenv("SAT_MAESTRO_MASS_MARGIN", "0.20")),
+            freecad_mcp_command=os.getenv("SAT_MAESTRO_FREECAD_MCP_CMD", "python -m freecad_mcp"),
+            calculix_path=os.getenv("SAT_MAESTRO_CALCULIX_PATH", "ccx"),
+            gmsh_mcp_command=os.getenv("SAT_MAESTRO_GMSH_MCP_CMD", "python -m sat_maestro_gmsh_mcp"),
         )
