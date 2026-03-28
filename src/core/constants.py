@@ -89,6 +89,7 @@ IGNORE_PATTERNS = {
 NATIVE_TOOL_MODELS = {
     "qwen2.5",
     "qwen2",
+    "qwen3",
     "llama3.1",
     "llama3.2",
     "mistral",
