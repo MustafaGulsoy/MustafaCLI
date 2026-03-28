@@ -306,10 +306,18 @@ Output is captured and returned. Long outputs are truncated from the middle."""
 
         effective_timeout = timeout or self.timeout
 
-        # On Windows, run through Git Bash so real Unix commands work (ls -la, grep, etc.)
+        # On Windows, detect if command needs Git Bash (Unix commands) or can run directly
         if sys.platform == "win32":
-            escaped = command.replace("'", "'\\''")
-            shell_command = f"bash -c '{escaped}'"
+            # Commands that need Git Bash (Unix tools not in cmd.exe)
+            unix_cmds = {"ls", "cat", "head", "tail", "grep", "find", "wc", "sort",
+                         "tree", "touch", "chmod", "chown", "cp", "mv"}
+            first_word = command.split()[0].lower() if command.strip() else ""
+            if first_word in unix_cmds:
+                escaped = command.replace("'", "'\\''")
+                shell_command = f"bash -c '{escaped}'"
+            else:
+                # Run directly (python, git, npm, full-path executables, etc.)
+                shell_command = command
         else:
             shell_command = command
 
