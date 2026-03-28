@@ -1,157 +1,153 @@
-# 🤖 MustafaCLI - AI Coding Agent
+# Mustafa CLI
 
-**Enterprise-Grade Local AI Coding Assistant with RAG & Web UI**
+**Claude Code mimarisini local LLM'lerle kullanan otonom AI kodlama asistani.**
 
-Version 0.4.0 | by Mustafa (Kardelen Yazılım)
-
----
-
-## 🌟 Features
-
-### Core Capabilities
-- ✅ **Local LLM Integration** (Ollama - qwen2.5-coder)
-- ✅ **Advanced Tool System** (8 powerful tools)
-- ✅ **RAG System** (Semantic code search with 5x faster navigation)
-- ✅ **Context Caching** (50-70% performance boost)
-- ✅ **Web UI** (FastAPI + Angular real-time interface)
-- ✅ **Loop Detection** (Smart error recovery)
-- ✅ **Streaming Responses** (Real-time output)
-
-### Tools Available
-1. **bash** - Execute shell commands
-2. **view** - Read files with syntax awareness
-3. **str_replace** - Edit files precisely
-4. **create_file** - Create new files
-5. **git** - Version control operations ⭐ NEW
-6. **search** - Semantic code search ⭐ NEW
-7. **ast_analysis** - Python structure analysis ⭐ NEW
-8. **generate_tests** - Auto-generate test templates ⭐ NEW
+Terminalde `mustafa` yazarak her dizinde kullanabilirsin. Ollama uzerinden calisan local modeller ile dosya okuma, duzenleme, komut calistirma ve kod analizi yapar — internet veya API key gerektirmez.
 
 ---
 
-## 🚀 Quick Start
+## Ne Yapar?
 
-### Prerequisites
+Mustafa CLI, Claude Code'un calisma mantigi ile local open-source modelleri birlestiren bir agentic CLI aracidir:
+
+- **Otonom Calisma**: Soru sormak yerine once dosyalari inceler, komutu calistirir, sonra rapor sunar
+- **8 Tool**: bash, view, str_replace, create_file, git, search, ast_analysis, generate_tests
+- **Model Secimi**: Baslangicta Ollama'daki tum modelleri listeler, tool-capable olanlari isaretler
+- **Canli Spinner**: Dusunurken "Thinking", "Vibing", "Reasoning" gibi durum mesajlari gosterir
+- **MCP Entegrasyonu**: Neo4j, FreeCAD, Gmsh, CalculiX MCP server'lari ile muhendislik analizi (SAT-MAESTRO plugin)
+- **Windows + Linux**: Git Bash uzerinden tum Unix komutlari Windows'ta da calisir
+
+---
+
+## Kurulum
+
+### Gereksinimler
+- Python 3.10+
+- [Ollama](https://ollama.ai) kurulu ve calisiyor
+- Node.js (global `mustafa` komutu icin)
+- Git for Windows (Windows'ta bash komutlari icin)
+
+### Adimlar
+
 ```bash
-# Install Ollama
-# Visit: https://ollama.ai
-
-# Pull model
-ollama pull qwen2.5-coder:7b
-
-# For RAG (optional but recommended)
-ollama pull nomic-embed-text
-```
-
-### Installation
-
-```bash
-# Clone repository
-git clone <your-repo>
+git clone https://github.com/MustafaGulsoy/MustafaCLI.git
 cd MustafaCLI
 
-# Create virtual environment
 python -m venv venv
-
-# Activate
 # Windows:
 venv\Scripts\activate
 # Linux/Mac:
 source venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
-```
 
-### Configuration
+# Model indir
+ollama pull qwen3:8b
 
-```bash
-# Create .env file
-echo "AGENT_MODEL_NAME=qwen2.5-coder:7b" > .env
-```
-
-### Usage
-
-#### 1. CLI Mode (Terminal)
-```bash
-# Basic usage
-local-agent "list files in current directory"
-
-# With RAG (recommended)
-local-agent --enable-rag "explain how agent works"
-
-# Verbose mode
-local-agent -v "create a Python function to calculate fibonacci"
-```
-
-#### 2. Web UI Mode
-```bash
-# Terminal 1: Start Backend
-python -m src.api.main
-
-# Terminal 2: Start Frontend
-cd frontend
-npm install
-npm start
-
-# Open browser
-http://localhost:4200
+# Global komut olarak kur
+npm link
 ```
 
 ---
 
-## 📚 Documentation
-
-- **[QUICK_WINS.md](QUICK_WINS.md)** - 1-day improvements (300% boost)
-- **[IMPROVEMENT_ROADMAP.md](IMPROVEMENT_ROADMAP.md)** - Long-term vision
-- **[RAG_GUIDE.md](RAG_GUIDE.md)** - Complete RAG guide (Turkish)
-- **[WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)** - Web UI setup & API docs
-- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)** - What's been built
-
----
-
-## 🎯 Performance Metrics
-
-### With RAG + Caching:
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Response Time | 15s | 3s | **5x faster** |
-| Files Opened | 12 | 2 | **6x fewer** |
-| Iterations | 5 | 1 | **5x fewer** |
-| Context Usage | 8000 | 3000 | **62% less** |
-| Success Rate | 70% | 95% | **+36%** |
-
----
-
-## 📖 Setup Guides
-
-### 1. RAG System (Recommended - 5 minutes)
-```bash
-python setup_rag.py
-```
-See: [RAG_GUIDE.md](RAG_GUIDE.md)
-
-### 2. Web UI Setup
-See: [WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)
-
----
-
-## 🚀 Get Started Now!
+## Kullanim
 
 ```bash
-# 1. Setup (5 minutes)
-pip install -r requirements.txt
-python setup_rag.py
+# Interaktif mod — model secim menusu acilir
+mustafa
 
-# 2. Test CLI
-local-agent --enable-rag "explain this project"
+# Tek komut
+mustafa -m qwen3:8b "bu projedeki dosyalari listele"
 
-# 3. Start Web UI
-python -m src.api.main  # Backend
-cd frontend && npm start  # Frontend
+# Belirli dizinde calistir
+mustafa -d /path/to/project "rapor cikar"
+
+# MCP server durumunu gor
+mustafa --mcp-status
+```
+
+### Interaktif Komutlar
+
+| Komut | Islem |
+|-------|-------|
+| `/help` | Yardim |
+| `/model qwen3:8b` | Model degistir |
+| `/tools` | Tool listesi |
+| `/cd /path` | Dizin degistir |
+| `/stats` | Context istatistikleri |
+| `/clear` | Konusmayi sifirla |
+| `/quit` | Cikis |
+
+---
+
+## Araclar
+
+| Tool | Aciklama |
+|------|----------|
+| `bash` | Shell komutlari calistir (ls, git, python, npm vb.) |
+| `view` | Dosya iceriklerini oku, satir araligi belirle |
+| `str_replace` | Dosyalarda metin degistir (atomic editing) |
+| `create_file` | Yeni dosya olustur |
+| `git` | Git status, diff, log, blame, show |
+| `search` | Kod tabaninda semantik arama |
+| `ast_analysis` | Python dosya yapisini analiz et (class, function, import) |
+| `generate_tests` | pytest test sablonu olustur |
+
+---
+
+## Mimari
+
+```
+mustafa (npm global) --> bin/mustafa.js --> python -m src.cli
+                                              |
+                                              v
+                                        Agent Loop
+                                     (think -> tool -> observe -> repeat)
+                                              |
+                                    +---------+---------+
+                                    |         |         |
+                                Provider   Tools    Context
+                                (Ollama)  (8 tool)  (compaction)
+                                    |
+                              Ollama API
+                           (qwen3, llama3, mistral...)
+```
+
+### Desteklenen Providerlar
+- **Ollama** (varsayilan) — local modeller
+- **OpenAI Compatible** — LM Studio, vLLM, text-generation-webui
+- **Anthropic** — Claude API (API key gerekir)
+
+---
+
+## SAT-MAESTRO Plugin
+
+Uydu muhendisligi icin ozel plugin. MCP server mimarisi ile:
+
+- **Elektrik Analizi**: ERC, net check, derating, connector validation
+- **Yapisal Analiz**: Kutle butcesi, agirlik merkezi, montaj agaci
+- **Termal Analiz**: Lumped-parameter solver, orbital dongu, sicaklik limitleri
+- **Mekanizma**: Deployment sequence, kinematik analiz, tork marjini
+- **Titresim**: Modal analiz, random vibrasyon, sok (SRS)
+- **Capraz Disiplin**: Elektrik-termal, kutle-termal korelasyon
+
+53 ECSS kurali (E-ST-32C, E-ST-31C, E-ST-33C, E-HB-32-26A) ile uyumluluk kontrolu.
+
+---
+
+## Yapilandirma
+
+`.env` dosyasi ile:
+
+```bash
+AGENT_MODEL_NAME=qwen3:8b       # Varsayilan model
+AGENT_TEMPERATURE=0.0            # Deterministik cikti
+AGENT_MAX_ITERATIONS=100         # Maksimum dongu
+AGENT_MAX_TOKENS=8192            # Response token limiti
 ```
 
 ---
 
-**Happy Coding with AI! 🤖✨**
+## Lisans
+
+MIT License - Mustafa (Kardelen Yazilim)
