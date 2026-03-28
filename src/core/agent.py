@@ -274,11 +274,7 @@ class Agent:
                 response.duration_ms = int((time.time() - start_time) * 1000)
                 self.state = AgentState.COMPLETED
 
-                # Add cache stats to response if using CachedContextManager
-                if isinstance(self.context, CachedContextManager):
-                    cache_stats = self.context.get_cache_stats()
-                    if cache_stats:
-                        response.content += f"\n\n[Cache: {cache_stats.get('tokens_saved', 0)} tokens saved, {cache_stats.get('hit_rate', 0):.1%} hit rate]"
+                # Cache stats removed — was showing fake/estimated values
 
                 yield response
                 break

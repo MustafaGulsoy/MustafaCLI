@@ -251,14 +251,13 @@ class OllamaProvider(ModelProvider):
             "model": self.model,
             "messages": messages,
             "stream": False,
+            "keep_alive": "10m",
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 8192,
             }
         }
-        # Disable thinking/reasoning for qwen3 models (massive speed improvement)
-        if "qwen3" in self.model.lower():
-            payload["options"]["think"] = False
 
         try:
             logger.debug(
@@ -330,15 +329,14 @@ class OllamaProvider(ModelProvider):
             "messages": messages,
             "tools": tools,
             "stream": False,
+            "keep_alive": "10m",
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": 8192,
             }
         }
-        # Disable thinking/reasoning for qwen3 models (massive speed improvement)
-        if "qwen3" in self.model.lower():
-            payload["options"]["think"] = False
-        
+
         response = await self.client.post(
             f"{self.base_url}/api/chat",
             json=payload,
