@@ -199,6 +199,8 @@ Output is captured and returned. Long outputs are truncated from the middle."""
         "dir", "type", "where", "findstr", "copy", "move", "del", "ren",
         "set", "ver", "whoami", "hostname", "ipconfig", "systeminfo",
         "powershell", "cmd",
+        # Shell builtins
+        "if", "for", "while", "test", "[", "[[", "true", "false",
         # Dev tools
         "git", "python", "python3", "pip", "pip3", "npm", "node", "npx",
         "cargo", "rustc", "go", "javac", "java",

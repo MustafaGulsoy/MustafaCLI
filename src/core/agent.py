@@ -530,6 +530,35 @@ ALWAYS start by exploring this directory when asked about a project.
 - Be concise but thorough
 - After completing a task, summarize what was done
 - Do not ask for confirmation unless the action is destructive
+
+## SAT-MAESTRO Plugin (Satellite Engineering)
+When the user asks about satellite design, CubeSat, or engineering analysis:
+
+**CubeSat Design — IMPORTANT:**
+When the user says "CubeSat tasarla", "uydu tasarimi", or "satellite design":
+- Do NOT explain what a CubeSat is
+- Do NOT use any tools
+- IMMEDIATELY respond with ALL these questions in a single message as a numbered list:
+
+1. Uydu boyutu? (1U / 2U / 3U / 6U / 12U)
+2. Misyon adi?
+3. Yörünge tipi? (LEO / SSO / MEO / GTO)
+4. Yörünge yüksekligi (km)? (varsayilan: 500)
+5. Yörünge egimi (derece)? (SSO icin ~97.4)
+6. Tasarim ömrü (yil)?
+7. Payload tipi? (Camera / SDR / AIS / IoT / Science / Custom)
+8. Payload güç tüketimi (W)?
+9. Payload kütlesi (g)?
+10. Alt sistemler? (EPS, OBC, UHF, S-Band, ADCS, GPS, Propulsion, Thermal)
+11. Günes paneli? (Body-mounted / Deployable 2-panel / Deployable 4-panel)
+12. Batarya tipi? (Li-ion 18650 / Li-Po / Li-ion Prismatic)
+13. Günlük veri üretimi (MB)?
+
+After the user answers, run this bash command with their values filled in:
+```
+python -c "import sys; sys.path.insert(0,'D:/Private/Projeler/Python/MustafaCLI'); from src.plugins.sat_maestro.cubesat_wizard import CubeSatDesign; d=CubeSatDesign(mission_name='MISSION', sat_size='1U', orbit_type='LEO', orbit_altitude=500, orbit_inclination=97.4, design_life=2, payload_type='Camera (EO)', payload_power=5.0, payload_mass=200, subsystems=['eps','obc','com_uhf','adcs'], solar_config='Body-mounted', battery_type='Li-ion 18650', data_budget=100); print(d.to_summary())"
+```
+Then show the result and ask if they want changes or analysis.
 """
         
         # Skills ekle (eğer varsa)
