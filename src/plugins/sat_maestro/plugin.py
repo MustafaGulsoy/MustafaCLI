@@ -98,6 +98,79 @@ class SatMaestroPlugin(PluginBase):
             )
         return None
 
+    # -- CubeSat Design Wizard --
+
+    @plugin_tool(
+        name="sat_cubesat_wizard",
+        description="Start CubeSat design wizard — returns the questionnaire to ask the user",
+    )
+    async def cubesat_wizard(self) -> ToolResult:
+        """Return the design questionnaire for the LLM to present to the user."""
+        from .cubesat_wizard import get_questionnaire
+        return ToolResult(success=True, output=get_questionnaire())
+
+    @plugin_tool(
+        name="sat_cubesat_create",
+        description="Create a CubeSat design from wizard answers and seed into Neo4j. "
+                    "Parameters: mission_name, sat_size (1U/2U/3U/6U/12U), "
+                    "orbit_type (LEO/SSO/MEO), orbit_altitude (km), orbit_inclination (deg), "
+                    "design_life (years), payload_type, payload_power (W), payload_mass (g), "
+                    "subsystems (comma-separated: eps,obc,com_uhf,com_sband,adcs,gps,propulsion,thermal), "
+                    "solar_config, battery_type",
+    )
+    async def cubesat_create(
+        self,
+        mission_name: str = "MyCubeSat-1",
+        sat_size: str = "1U",
+        orbit_type: str = "LEO",
+        orbit_altitude: str = "500",
+        orbit_inclination: str = "97.4",
+        design_life: str = "2",
+        payload_type: str = "Camera (EO)",
+        payload_power: str = "5.0",
+        payload_mass: str = "200",
+        subsystems: str = "eps,obc,com_uhf,adcs",
+        solar_config: str = "Body-mounted",
+        battery_type: str = "Li-ion 18650",
+        data_budget: str = "100",
+    ) -> ToolResult:
+        """Create CubeSat design, display summary, and seed Neo4j."""
+        from .cubesat_wizard import CubeSatDesign, build_neo4j_cypher
+
+        try:
+            design = CubeSatDesign(
+                mission_name=mission_name,
+                sat_size=sat_size,
+                orbit_type=orbit_type,
+                orbit_altitude=float(orbit_altitude),
+                orbit_inclination=float(orbit_inclination),
+                design_life=float(design_life),
+                payload_type=payload_type,
+                payload_power=float(payload_power),
+                payload_mass=float(payload_mass),
+                subsystems=[s.strip() for s in subsystems.split(",")],
+                solar_config=solar_config,
+                battery_type=battery_type,
+                data_budget=float(data_budget),
+            )
+
+            summary = design.to_summary()
+
+            # Seed Neo4j if connected
+            neo4j_status = "Neo4j not connected — design saved locally only"
+            if self.neo4j and self.neo4j.is_connected:
+                queries = build_neo4j_cypher(design)
+                for q in queries:
+                    await self._graph.execute_write(q)
+                neo4j_status = f"Neo4j seeded: {len(queries)} queries executed"
+
+            return ToolResult(
+                success=True,
+                output=f"{summary}\n\n{neo4j_status}",
+            )
+        except Exception as e:
+            return ToolResult(success=False, output="", error=f"CubeSat creation failed: {e}")
+
     # -- Import Tools --
 
     @plugin_tool(
