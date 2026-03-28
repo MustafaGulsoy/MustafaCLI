@@ -26,6 +26,15 @@ def main():
     p.add_argument("--data", type=float, default=100)
     args = p.parse_args()
 
+    # Map user-friendly names to internal IDs
+    subsystem_map = {
+        "eps": "eps", "obc": "obc", "uhf": "com_uhf", "com_uhf": "com_uhf",
+        "s-band": "com_sband", "sband": "com_sband", "com_sband": "com_sband",
+        "adcs": "adcs", "gps": "gps", "propulsion": "propulsion", "thermal": "thermal",
+    }
+    raw_subs = [s.strip().lower() for s in args.subsystems.replace("+", ",").replace(" ", ",").split(",") if s.strip()]
+    mapped_subs = [subsystem_map.get(s, s) for s in raw_subs]
+
     design = CubeSatDesign(
         mission_name=args.name,
         sat_size=args.size,
@@ -36,9 +45,9 @@ def main():
         payload_type=args.payload,
         payload_power=args.payload_power,
         payload_mass=args.payload_mass,
-        subsystems=[s.strip() for s in args.subsystems.split(",")],
-        solar_config=args.solar,
-        battery_type=args.battery,
+        subsystems=mapped_subs,
+        solar_config=args.solar.replace("-", " "),
+        battery_type=args.battery.replace("-", " "),
         data_budget=args.data,
     )
     print(design.to_summary())
