@@ -256,6 +256,9 @@ class OllamaProvider(ModelProvider):
                 "num_predict": max_tokens,
             }
         }
+        # Disable thinking/reasoning for qwen3 models (massive speed improvement)
+        if "qwen3" in self.model.lower():
+            payload["options"]["think"] = False
 
         try:
             logger.debug(
@@ -332,6 +335,9 @@ class OllamaProvider(ModelProvider):
                 "num_predict": max_tokens,
             }
         }
+        # Disable thinking/reasoning for qwen3 models (massive speed improvement)
+        if "qwen3" in self.model.lower():
+            payload["options"]["think"] = False
         
         response = await self.client.post(
             f"{self.base_url}/api/chat",
