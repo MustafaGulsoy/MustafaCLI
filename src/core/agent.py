@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ class AgentConfig:
     Production'da bunları environment variables veya config file'dan yükle.
     """
     # Model settings
-    model_name: str = "qwen2.5-coder:32b"  # veya "deepseek-coder-v2", "codellama"
+    model_name: str = "qwen3:8b"
     temperature: float = 0.0  # Deterministic outputs for coding
     max_tokens: int = 8192
     
@@ -376,6 +377,8 @@ class Agent:
                 )
             else:
                 try:
+                    # Coerce string args to proper types (models often send "120" instead of 120)
+                    tool_args = self._coerce_tool_args(tool_args)
                     result = await asyncio.wait_for(
                         tool.execute(**tool_args),
                         timeout=self.config.tool_timeout,
@@ -400,7 +403,40 @@ class Agent:
             results.append(result)
         
         return results
-    
+
+    # Argument names that should be numeric (not string paths/content)
+    _NUMERIC_ARGS = {"timeout", "max_results", "max_lines"}
+    _BOOL_ARGS = {"include_docstrings", "allow_dangerous"}
+    _INT_LIST_ARGS = {"line_range"}
+
+    @classmethod
+    def _coerce_tool_args(cls, args: dict) -> dict:
+        """Coerce tool arguments from strings to proper types.
+
+        LLMs often send numeric values as strings (e.g. timeout="120").
+        Only coerce known numeric/bool fields to avoid breaking path strings.
+        """
+        coerced = {}
+        for key, value in args.items():
+            if key in cls._NUMERIC_ARGS and isinstance(value, str):
+                try:
+                    coerced[key] = int(value)
+                except ValueError:
+                    try:
+                        coerced[key] = float(value)
+                    except ValueError:
+                        coerced[key] = value
+            elif key in cls._BOOL_ARGS and isinstance(value, str):
+                coerced[key] = value.lower() in ("true", "1", "yes")
+            elif key in cls._INT_LIST_ARGS and isinstance(value, list):
+                coerced[key] = [
+                    int(v) if isinstance(v, str) and v.isdigit() else v
+                    for v in value
+                ]
+            else:
+                coerced[key] = value
+        return coerced
+
     def _build_system_prompt(self) -> str:
         """
         System prompt oluştur - Claude Code'un sırrı
@@ -408,102 +444,92 @@ class Agent:
         Bu prompt, agent'ın davranışını belirler. Skills, working directory,
         ve task-specific instructions burada birleştirilir.
         """
-        base_prompt = f"""You are an AI coding assistant with access to tools for file operations and command execution.
+        base_prompt = f"""You are Mustafa CLI, an autonomous AI coding agent. You MUST use your tools to accomplish tasks. NEVER ask clarifying questions when you can find the answer yourself using tools.
 
-## Core Principles
-
-1. **Think Step by Step**: Before taking action, analyze what needs to be done
-2. **Verify Before Editing**: Always view files before modifying them
-3. **Atomic Changes**: Make small, focused changes rather than large rewrites
-4. **Test Your Work**: Run commands to verify changes work
-5. **Recover from Errors**: If something fails, analyze why and try a different approach
-
-## Tool Selection - Decision Tree
-
-**Question: Does the file exist?**
-- NO → Use `create_file`
-- YES → Go to next question
-
-**Question: Do you need to edit the file?**
-- NO → Use `view` to read it
-- YES → Follow these steps:
-  1. Use `view` to read current content
-  2. Use `str_replace` to make changes
-  3. Use `view` again to verify
-
-**NEVER use create_file to edit existing files!**
-
-## Tool Usage Guidelines
-
-### bash
-- Use for running commands, installing packages, testing code
-- Always check command output before proceeding
-- Use appropriate timeouts for long-running commands
-
-### view
-- Use to understand project structure and file contents
-- Always view a file before editing it
-- Use line ranges for large files
-
-### str_replace - MOST IMPORTANT FOR EDITING FILES
-- ALWAYS use this for editing existing files (NOT create_file!)
-- STEP 1: Use 'view' to read the file first
-- STEP 2: Copy the EXACT text to replace (including whitespace!)
-- STEP 3: Provide the new text
-
-Example:
-  File contains: name = "John"
-  To change it:
-  ```tool
-  {{
-    "name": "str_replace",
-    "arguments": {{
-      "path": "user.py",
-      "old_str": "name = \"John\"",
-      "new_str": "name = \"Jane\""
-    }}
-  }}
-  ```
-
-CRITICAL: old_str must match EXACTLY (spaces, quotes, newlines)
-
-### create_file
-- Use for creating new files
-- Provide complete file content
-- Use appropriate file extensions
+## GOLDEN RULE: ACT FIRST, ASK LATER
+- When the user asks about a project, IMMEDIATELY use `bash` to list files and `view` to read them
+- When the user asks for a report, EXPLORE the directory first, then generate the report
+- When the user asks to fix something, READ the code first, then fix it
+- ONLY ask questions when the information truly cannot be found using tools
+- You have full access to the filesystem — USE IT
 
 ## Working Directory
 Your working directory is: {self.config.working_dir}
+ALWAYS start by exploring this directory when asked about a project.
 
-## Response Guidelines
+## Tool Usage — Decision Tree
+
+**User asks about a project / "what's here" / report:**
+1. `bash` → `ls` to see project structure (works on both Windows and Linux)
+2. `view` → Read key files (README, package.json, requirements.txt, etc.)
+3. `bash` → `git log --oneline -10` for recent history
+4. Synthesize findings into a comprehensive response
+
+**IMPORTANT: Platform & Performance**
+- You are running on {os.name}. Commands run through PowerShell on Windows.
+- Use `ls` (works everywhere), `cat` for reading, `git` for version control.
+- NEVER use `ls -R` or recursive listing — it can produce massive output and hang.
+- To explore a project, use `ls` (top-level only), then `view` specific files.
+- Keep bash commands fast — avoid commands that scan entire directory trees.
+
+**User asks to edit a file:**
+1. `view` → Read current content
+2. `str_replace` → Make the change (NEVER use create_file for existing files!)
+3. `view` → Verify the change
+
+**User asks to create something new:**
+1. `create_file` → Write the new file
+2. `bash` → Run/test if applicable
+
+**User asks to run/test/build:**
+1. `bash` → Execute the command
+2. Analyze output and report results
+
+## Tools
+
+### bash
+- Run shell commands, install packages, test code, explore directories
+- Use `ls`, `dir`, `tree`, `find`, `git` to understand project structure
+- Check output before proceeding
+
+### view
+- Read file contents with syntax awareness
+- Always view before editing
+- Use line ranges for large files
+
+### str_replace
+- Edit existing files by replacing exact text
+- old_str must match EXACTLY (spaces, quotes, newlines)
+- Example:
+  ```tool
+  {{"name": "str_replace", "arguments": {{"path": "user.py", "old_str": "name = \\"John\\"", "new_str": "name = \\"Jane\\""}}}}
+  ```
+
+### create_file
+- Create NEW files only (never for editing existing files)
+
+### git
+- Read-only git operations: status, diff, log, blame, show
+
+### search
+- Semantic code search across codebase
+
+### ast_analysis
+- Analyze Python file structure (classes, functions, imports)
+
+### generate_tests
+- Auto-generate pytest test templates
+
+## Error Recovery
+- If a tool fails, ANALYZE WHY before retrying
+- Do NOT repeat the exact same failing command
+- If same error happens 2 times, try a DIFFERENT APPROACH
+- Windows paths: use forward slashes or quotes
+
+## Response Style
 - Be concise but thorough
-- Show your reasoning when making decisions
 - After completing a task, summarize what was done
-- If you encounter an error, explain what went wrong and try to fix it
-- When a task is complete, clearly state that it's done
-
-## CRITICAL: Task Completion Rules
-- If asked to EDIT a file, you MUST use str_replace (viewing alone is NOT enough!)
-- If asked to CREATE a file, you MUST use create_file
-- If asked to RUN a command, you MUST use bash
-- DO NOT stop after just viewing/reading - complete the actual task!
-- After making changes, VERIFY them by viewing the file again
-
-## ERROR RECOVERY - MOST IMPORTANT!
-- If a tool call FAILS, ANALYZE WHY before trying again
-- DO NOT repeat the EXACT SAME failing command
-- Common issues:
-  * Path with spaces: Use 'ahmet mehmet' NOT ahmet_mehmet
-  * Windows: Use forward slashes or quotes for paths
-  * Missing file: Check with 'view' first
-- If same error happens 2 times, TRY A DIFFERENT APPROACH
-- If 'view' works but 'bash' fails for same file → JUST USE VIEW!
-- When you answer a question, STOP - don't keep calling tools unnecessarily
-
-## Important
-- Do not ask for confirmation before taking actions unless the action is destructive
-- If you need to make multiple related changes, do them in sequence
-- Always verify your changes work before declaring success
+- Do not ask for confirmation unless the action is destructive
 """
         
         # Skills ekle (eğer varsa)

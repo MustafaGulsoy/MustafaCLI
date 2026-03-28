@@ -23,6 +23,7 @@ import re
 import subprocess
 import json
 import shlex
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -191,13 +192,20 @@ Output is captured and returned. Long outputs are truncated from the middle."""
     
     # Whitelist of safe command prefixes
     SAFE_COMMANDS = {
+        # Unix
         "ls", "cat", "head", "tail", "grep", "find", "echo", "pwd", "cd",
-        "mkdir", "touch", "cp", "mv", "chmod", "chown",
-        "git", "python", "python3", "pip", "npm", "node",
+        "mkdir", "touch", "cp", "mv", "chmod", "chown", "wc", "sort", "tree",
+        # Windows
+        "dir", "type", "where", "findstr", "copy", "move", "del", "ren",
+        "set", "ver", "whoami", "hostname", "ipconfig", "systeminfo",
+        "powershell", "cmd",
+        # Dev tools
+        "git", "python", "python3", "pip", "pip3", "npm", "node", "npx",
         "cargo", "rustc", "go", "javac", "java",
         "make", "cmake", "gcc", "g++", "clang",
         "docker", "kubectl", "helm",
         "pytest", "npm test", "cargo test",
+        "dotnet", "ollama",
     }
 
     def __init__(
@@ -268,7 +276,14 @@ Output is captured and returned. Long outputs are truncated from the middle."""
         Returns:
             ToolResult: Komut sonucu
         """
-        logger.info(
+        # Coerce timeout to int (models sometimes send strings)
+        if timeout is not None:
+            try:
+                timeout = int(timeout)
+            except (ValueError, TypeError):
+                timeout = None
+
+        logger.debug(
             "tool_execute_start",
             tool="bash",
             command=command[:100],
@@ -286,11 +301,18 @@ Output is captured and returned. Long outputs are truncated from the middle."""
             )
 
         effective_timeout = timeout or self.timeout
-        
+
+        # On Windows, run through Git Bash so real Unix commands work (ls -la, grep, etc.)
+        if sys.platform == "win32":
+            escaped = command.replace("'", "'\\''")
+            shell_command = f"bash -c '{escaped}'"
+        else:
+            shell_command = command
+
         try:
             # Async subprocess
             process = await asyncio.create_subprocess_shell(
-                command,
+                shell_command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.working_dir,
@@ -457,7 +479,7 @@ Use this tool before editing files to understand their structure."""
         Returns:
             ToolResult: İçerik veya hata
         """
-        logger.info("tool_execute_start", tool="view", path=path)
+        logger.debug("tool_execute_start", tool="view", path=path)
 
         # Path'i resolve et
         if Path(path).is_absolute():
@@ -963,7 +985,7 @@ Parent directories will be created if they don't exist."""
         Returns:
             ToolResult: İşlem sonucu
         """
-        logger.info("tool_execute_start", tool="create_file", path=path)
+        logger.debug("tool_execute_start", tool="create_file", path=path)
 
         # Path'i resolve et
         if Path(path).is_absolute():
@@ -1063,6 +1085,9 @@ EXAMPLES:
         "required": ["command"]
     }
 
+    def __init__(self, working_dir: str = "."):
+        self.working_dir = Path(working_dir).resolve()
+
     async def execute(self, command: str, args: str = "") -> ToolResult:
         """Execute git command"""
         try:
@@ -1123,6 +1148,9 @@ EXAMPLES:
         },
         "required": ["query"]
     }
+
+    def __init__(self, working_dir: str = "."):
+        self.working_dir = Path(working_dir).resolve()
 
     async def execute(
         self,
@@ -1254,6 +1282,9 @@ EXAMPLES:
         },
         "required": ["path"]
     }
+
+    def __init__(self, working_dir: str = "."):
+        self.working_dir = Path(working_dir).resolve()
 
     async def execute(self, path: str, include_docstrings: bool = False) -> ToolResult:
         """Analyze Python file structure"""
@@ -1411,6 +1442,9 @@ EXAMPLES:
         },
         "required": ["path"]
     }
+
+    def __init__(self, working_dir: str = "."):
+        self.working_dir = Path(working_dir).resolve()
 
     async def execute(self, path: str, output_path: str = None) -> ToolResult:
         """Generate test template"""

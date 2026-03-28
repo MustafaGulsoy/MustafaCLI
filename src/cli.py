@@ -21,9 +21,20 @@ from __future__ import annotations
 import asyncio
 import argparse
 import os
+import random
 import sys
+import time as _time
 from pathlib import Path
 from typing import Optional
+
+# Force UTF-8 on Windows so Rich spinners render correctly
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # Rich imports - güzel terminal output için
 try:
@@ -36,16 +47,133 @@ try:
     from rich.live import Live
     from rich.text import Text
     from rich.prompt import Prompt
+    from rich.spinner import Spinner
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
     print("Warning: 'rich' not installed. Install with: pip install rich")
+
+import httpx
+
+# Suppress noisy log output in CLI mode — must run before any logger is created
+import logging
+from .core.logging_config import setup_logging
+setup_logging(log_level="WARNING", log_to_console=False)
+
+
+# Live status messages
+_THINKING_PHRASES = [
+    "Thinking",
+    "Reasoning",
+    "Analyzing",
+    "Processing",
+    "Vibing",
+    "Deep in thought",
+    "Connecting the dots",
+    "Exploring possibilities",
+    "Evaluating",
+    "Pondering",
+    "Reflecting",
+    "Brainstorming",
+]
+
+_TOOL_PHRASES = {
+    "bash": "Running command",
+    "view": "Reading file",
+    "str_replace": "Editing file",
+    "create_file": "Creating file",
+    "git": "Checking git",
+    "search": "Searching codebase",
+    "ast_analysis": "Analyzing structure",
+    "generate_tests": "Generating tests",
+}
 
 from .core.agent import Agent, AgentConfig, AgentState
 from .core.tools import create_default_tools, ToolResult
 from .core.context import ContextManager
 from .core.providers import create_provider
 from .core.config import AgentSettings
+
+
+def _get_ollama_models(ollama_url: str = "http://localhost:11434") -> list[dict]:
+    """Fetch available models from Ollama."""
+    try:
+        resp = httpx.get(f"{ollama_url}/api/tags", timeout=5.0)
+        resp.raise_for_status()
+        return resp.json().get("models", [])
+    except Exception:
+        return []
+
+
+def _get_mcp_status() -> list[dict]:
+    """Detect configured MCP servers from SAT-MAESTRO config."""
+    servers = []
+    try:
+        from .plugins.sat_maestro.config import SatMaestroConfig
+        cfg = SatMaestroConfig.from_env()
+        servers.append({"name": "neo4j", "endpoint": cfg.neo4j_uri, "type": "database"})
+        servers.append({"name": "freecad", "endpoint": cfg.freecad_mcp_command, "type": "cad"})
+        servers.append({"name": "gmsh", "endpoint": cfg.gmsh_mcp_command, "type": "mesh"})
+        servers.append({"name": "calculix", "endpoint": cfg.calculix_path, "type": "fem"})
+    except Exception:
+        pass
+    return servers
+
+
+TOOL_CAPABLE_PREFIXES = {"qwen2.5", "qwen2", "qwen3", "llama3.1", "llama3.2", "mistral"}
+
+
+def _is_tool_capable(model_name: str) -> bool:
+    """Check if model supports native tool calling."""
+    name_lower = model_name.lower()
+    return any(name_lower.startswith(p) for p in TOOL_CAPABLE_PREFIXES)
+
+
+def _select_model_interactive(console: Console | None, ollama_url: str = "http://localhost:11434") -> str | None:
+    """Show interactive model selection menu. Returns chosen model name or None."""
+    models = _get_ollama_models(ollama_url)
+    if not models:
+        if console:
+            console.print("[red]Ollama'ya baglanilamadi veya model bulunamadi.[/red]")
+            console.print("[dim]Ollama calistigından emin ol: ollama serve[/dim]")
+        else:
+            print("Ollama'ya baglanilamadi veya model bulunamadi.")
+        return None
+
+    if console:
+        table = Table(title="Mevcut Modeller", border_style="cyan")
+        table.add_column("#", style="bold cyan", width=4)
+        table.add_column("Model", style="green")
+        table.add_column("Boyut", style="yellow", justify="right")
+        table.add_column("Tool", style="dim", justify="center")
+        for i, m in enumerate(models, 1):
+            size_gb = m.get("size", 0) / (1024 ** 3)
+            tool_ok = "[green]OK[/green]" if _is_tool_capable(m["name"]) else "[red]--[/red]"
+            table.add_row(str(i), m["name"], f"{size_gb:.1f} GB", tool_ok)
+        console.print(table)
+        console.print("[dim]Tool=OK modeller agentic calisabilir (tool calling destegi)[/dim]")
+        choice = Prompt.ask(
+            f"[bold cyan]Model sec (1-{len(models)})[/bold cyan]",
+            default="1",
+        )
+    else:
+        print("\nMevcut Modeller:")
+        for i, m in enumerate(models, 1):
+            size_gb = m.get("size", 0) / (1024 ** 3)
+            tool_tag = " [tool]" if _is_tool_capable(m["name"]) else ""
+            print(f"  {i}. {m['name']} ({size_gb:.1f} GB){tool_tag}")
+        choice = input(f"Model sec (1-{len(models)}) [1]: ") or "1"
+
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(models):
+            selected = models[idx]["name"]
+            if console and not _is_tool_capable(selected):
+                console.print(f"[yellow]Uyari: {selected} tool calling desteklemiyor. Agent mod dusguen calismayabilir.[/yellow]")
+            return selected
+    except ValueError:
+        pass
+    return models[0]["name"]
 
 
 class CLI:
@@ -93,76 +221,107 @@ class CLI:
         )
         
         # State
-        self._current_spinner = None
         self._tool_count = 0
-    
+        self._live: Live | None = None
+        self._phase_start = 0.0
+
     def _print(self, *args, **kwargs):
         """Print wrapper"""
         if self.console:
             self.console.print(*args, **kwargs)
         else:
             print(*args)
-    
+
+    def _set_status(self, text: str, style: str = "cyan"):
+        """Update the live spinner status line."""
+        if self._live and self.console:
+            elapsed = _time.time() - self._phase_start
+            spinner = Spinner("dots", text=f"[{style}]{text}[/{style}] [dim]({elapsed:.0f}s)[/dim]")
+            self._live.update(spinner)
+        elif not RICH_AVAILABLE:
+            print(f"  ... {text}")
+
     def _on_thinking(self, message: str):
-        """Thinking callback - progress göster"""
-        pass  # Progress bar ile handle edilecek
-    
+        """Thinking callback"""
+        phrase = random.choice(_THINKING_PHRASES)
+        self._set_status(phrase)
+
     def _on_tool_start(self, tool_name: str, args: dict):
         """Tool başladığında"""
         self._tool_count += 1
-        
+
         # Kısa arg summary
-        arg_summary = ", ".join(f"{k}={repr(v)[:30]}" for k, v in list(args.items())[:3])
-        if len(args) > 3:
+        arg_summary = ", ".join(f"{k}={repr(v)[:30]}" for k, v in list(args.items())[:2])
+        if len(args) > 2:
             arg_summary += ", ..."
-        
-        if self.console:
-            self._print(
-                f"[dim]┌─ Tool #{self._tool_count}:[/dim] [cyan]{tool_name}[/cyan]"
-                f"[dim]({arg_summary})[/dim]"
+
+        phrase = _TOOL_PHRASES.get(tool_name, f"Running {tool_name}")
+        self._set_status(f"{phrase} ({arg_summary})", style="yellow")
+
+        if self.console and self._live:
+            # Print tool line above spinner
+            self._live.console.print(
+                f"  [dim]┌─[/dim] [cyan]{tool_name}[/cyan] [dim]{arg_summary}[/dim]"
             )
-        else:
+        elif not RICH_AVAILABLE:
             print(f">>> Tool: {tool_name}({arg_summary})")
-    
+
     def _on_tool_end(self, tool_name: str, result: ToolResult):
         """Tool bittiğinde"""
-        if self.console:
-            status = "[green]✓[/green]" if result.success else "[red]✗[/red]"
-            
-            # Kısa output preview
-            output_preview = result.output[:100].replace("\n", " ")
-            if len(result.output) > 100:
-                output_preview += "..."
-            
+        status_icon = "✓" if result.success else "✗"
+
+        if self.console and self._live:
             if result.success:
-                self._print(f"[dim]└─ {status} {output_preview}[/dim]")
+                output_preview = result.output[:120].replace("\n", " ")
+                if len(result.output) > 120:
+                    output_preview += "..."
+                self._live.console.print(
+                    f"  [dim]└─ [green]{status_icon}[/green] {output_preview}[/dim]"
+                )
             else:
-                self._print(f"[dim]└─ {status}[/dim] [red]{result.error}[/red]")
-        else:
+                self._live.console.print(
+                    f"  [dim]└─ [red]{status_icon}[/red][/dim] [red]{result.error[:120]}[/red]"
+                )
+            # Back to thinking
+            phrase = random.choice(_THINKING_PHRASES)
+            self._set_status(phrase)
+        elif not RICH_AVAILABLE:
             status = "OK" if result.success else "FAIL"
             print(f"<<< {status}: {result.output[:100] if result.success else result.error}")
     
     def _print_welcome(self):
         """Welcome mesajı"""
+        mcp_servers = _get_mcp_status()
+        mcp_lines = ""
+        if mcp_servers:
+            mcp_lines = "\n[dim]MCP Servers:[/dim]"
+            for s in mcp_servers:
+                mcp_lines += f"\n  [cyan]{s['name']}[/cyan] [dim]({s['type']})[/dim] -> {s['endpoint']}"
+
         if self.console:
             self._print(Panel.fit(
-                f"""[bold cyan]Local Agent CLI[/bold cyan]
-                
-[dim]Model:[/dim] {self.config.model_name}
+                f"""[bold cyan]Mustafa CLI[/bold cyan]
+
+[dim]Model:[/dim] [green]{self.config.model_name}[/green]
 [dim]Working Dir:[/dim] {self.config.working_dir}
-[dim]Tools:[/dim] {', '.join(self.tools.list_tools())}
+[dim]Tools:[/dim] {', '.join(self.tools.list_tools())}{mcp_lines}
 
 Type your request or [bold]/help[/bold] for commands.
 Press [bold]Ctrl+C[/bold] to cancel, [bold]Ctrl+D[/bold] to exit.""",
-                title="🤖 Agent Ready",
+                title="Mustafa CLI",
                 border_style="cyan"
             ))
         else:
+            mcp_text = ""
+            if mcp_servers:
+                mcp_text = "\nMCP Servers:"
+                for s in mcp_servers:
+                    mcp_text += f"\n  {s['name']} ({s['type']}) -> {s['endpoint']}"
             print(f"""
-=== Local Agent CLI ===
+=== Mustafa CLI ===
 Model: {self.config.model_name}
 Working Dir: {self.config.working_dir}
-Tools: {', '.join(self.tools.list_tools())}
+Tools: {', '.join(self.tools.list_tools())}{mcp_text}
 
 Type your request or /help for commands.
 """)
@@ -322,41 +481,27 @@ Type your request or /help for commands.
             print()
     
     async def run_single(self, prompt: str) -> str:
-        """
-        Single prompt execution (non-interactive)
-        
-        Args:
-            prompt: User prompt
-            
-        Returns:
-            Final response content
-        """
+        """Single prompt execution (non-interactive)."""
         self._tool_count = 0
+        self._phase_start = _time.time()
         final_content = ""
-        
+
         if self.console:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                console=self.console,
-                transient=True,
-            ) as progress:
-                task = progress.add_task("Thinking...", total=None)
-                
+            spinner = Spinner("dots", text="[cyan]Thinking...[/cyan]")
+            with Live(spinner, console=self.console, refresh_per_second=10, transient=True) as live:
+                self._live = live
                 async for response in self.agent.run(prompt):
                     if response.tool_calls:
-                        progress.update(task, description=f"Running tools... (iteration {response.iteration})")
-                    else:
-                        progress.update(task, description="Generating response...")
-                    
+                        self._set_status(f"Iteration {response.iteration} — {random.choice(_THINKING_PHRASES)}")
                     if response.state == AgentState.COMPLETED:
                         final_content = response.content
+                self._live = None
         else:
             print("Processing...")
             async for response in self.agent.run(prompt):
                 if response.state == AgentState.COMPLETED:
                     final_content = response.content
-        
+
         self._print_response(final_content)
         return final_content
     
@@ -388,26 +533,40 @@ Type your request or /help for commands.
                 
                 # Agent çalıştır
                 self._tool_count = 0
-                
-                self._print_info(f"Working... (max {self.config.max_iterations} iterations)")
-                
-                async for response in self.agent.run(prompt):
-                    # Progress update
-                    if response.tool_calls:
-                        self._print_info(f"Iteration {response.iteration}: {len(response.tool_calls)} tool call(s)")
-                    
-                    # Final response
-                    if response.state == AgentState.COMPLETED:
-                        self._print_response(response.content)
-                        self._print_info(
-                            f"Completed in {response.iteration} iteration(s), "
-                            f"{response.tokens_used:,} tokens, "
-                            f"{response.duration_ms}ms"
-                        )
-                    
-                    # Error
-                    elif response.state == AgentState.ERROR:
-                        self._print_error(response.content)
+                self._phase_start = _time.time()
+
+                if self.console:
+                    spinner = Spinner("dots", text=f"[cyan]{random.choice(_THINKING_PHRASES)}...[/cyan]")
+                    with Live(spinner, console=self.console, refresh_per_second=10, transient=True) as live:
+                        self._live = live
+                        async for response in self.agent.run(prompt):
+                            if response.tool_calls:
+                                self._set_status(
+                                    f"Iteration {response.iteration} — {random.choice(_THINKING_PHRASES)}"
+                                )
+                            if response.state == AgentState.COMPLETED:
+                                break
+                            elif response.state == AgentState.ERROR:
+                                break
+                        self._live = None
+                else:
+                    print("Processing...")
+                    async for response in self.agent.run(prompt):
+                        if response.state in (AgentState.COMPLETED, AgentState.ERROR):
+                            break
+
+                # Final response
+                if response.state == AgentState.COMPLETED:
+                    self._print_response(response.content)
+                    elapsed = _time.time() - self._phase_start
+                    elapsed_ms = int((_time.time() - self._phase_start) * 1000)
+                    self._print_info(
+                        f"Completed in {response.iteration} iteration(s), "
+                        f"{response.tokens_used:,} tokens, "
+                        f"{elapsed_ms}ms"
+                    )
+                elif response.state == AgentState.ERROR:
+                    self._print_error(response.content)
                 
             except KeyboardInterrupt:
                 self._print_info("\nCancelled. Type /quit to exit.")
@@ -493,24 +652,68 @@ Examples:
         action="store_true",
         help="Verbose output"
     )
-    
+
+    parser.add_argument(
+        "-s", "--select-model",
+        action="store_true",
+        help="Interactively select model from Ollama"
+    )
+
+    parser.add_argument(
+        "--mcp-status",
+        action="store_true",
+        help="Show MCP server status and exit"
+    )
+
     args = parser.parse_args()
-    
+
+    # MCP status only
+    if args.mcp_status:
+        console = Console() if RICH_AVAILABLE else None
+        servers = _get_mcp_status()
+        if not servers:
+            print("No MCP servers configured.")
+        elif console:
+            table = Table(title="MCP Servers", border_style="cyan")
+            table.add_column("Server", style="green")
+            table.add_column("Type", style="cyan")
+            table.add_column("Endpoint", style="dim")
+            for s in servers:
+                table.add_row(s["name"], s["type"], s["endpoint"])
+            console.print(table)
+        else:
+            for s in servers:
+                print(f"  {s['name']} ({s['type']}) -> {s['endpoint']}")
+        return
+
+    # Model selection
+    model = args.model
+    console = Console() if RICH_AVAILABLE else None
+
+    # Interactive model selection: if --select-model or interactive mode without explicit -m
+    model_explicitly_set = "-m" in sys.argv or "--model" in sys.argv
+    if args.select_model or (not args.prompt and not model_explicitly_set):
+        selected = _select_model_interactive(console)
+        if selected:
+            model = selected
+        elif not model_explicitly_set:
+            return
+
     # Config oluştur
     config = AgentConfig(
-        model_name=args.model,
+        model_name=model,
         working_dir=os.path.abspath(args.dir),
         max_iterations=args.max_iterations,
         max_tokens=args.max_tokens,
     )
-    
+
     # CLI oluştur
     cli = CLI(
         config=config,
         provider_type=args.provider,
-        model=args.model,
+        model=model,
     )
-    
+
     # Çalıştır
     if args.prompt:
         # Single prompt mode

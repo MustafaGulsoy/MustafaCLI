@@ -1,0 +1,10 @@
+{
+  "name": "mustafa-cli",
+  "version": "0.2.0",
+  "description": "AI Coding Agent - Claude Code architecture with open source models",
+  "bin": {
+    "mustafa": "./bin/mustafa.js"
+  },
+  "author": "Mustafa (Kardelen Yazılım)",
+  "license": "MIT"
+}

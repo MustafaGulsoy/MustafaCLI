@@ -10,12 +10,12 @@ License: MIT
 
 # File and Content Limits
 MAX_FILE_SIZE_CHARS = 100_000  # 100KB text equivalent
-MAX_OUTPUT_CHARS = 100_000  # Maximum tool output size
+MAX_OUTPUT_CHARS = 10_000  # Maximum tool output size (keep small for LLM context)
 MAX_DIR_ENTRIES = 500  # Maximum directory listing entries
 MAX_DIR_DEPTH = 2  # Maximum depth for directory traversal
 
 # Agent Configuration
-DEFAULT_MODEL = "qwen2.5-coder:32b"
+DEFAULT_MODEL = "qwen3:8b"
 DEFAULT_TEMPERATURE = 0.0  # Deterministic for coding
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_MAX_ITERATIONS = 100  # Prevent infinite loops
@@ -30,7 +30,7 @@ DEFAULT_KEEP_RECENT_MESSAGES = 10  # Messages to keep after compaction
 
 # Timeouts (seconds)
 DEFAULT_TOOL_TIMEOUT = 300  # 5 minutes
-DEFAULT_BASH_TIMEOUT = 120  # 2 minutes
+DEFAULT_BASH_TIMEOUT = 30  # 30 seconds
 DEFAULT_HTTP_TIMEOUT = 300  # 5 minutes
 DEFAULT_MODEL_TIMEOUT = 300  # 5 minutes
 
@@ -103,7 +103,7 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 # Logging
 LOG_FORMAT = "%(timestamp)s [%(level)s] %(event)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-DEFAULT_LOG_LEVEL = "INFO"
+DEFAULT_LOG_LEVEL = "WARNING"
 DEFAULT_LOG_FILE = "agent.log"
 MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 LOG_BACKUP_COUNT = 5
