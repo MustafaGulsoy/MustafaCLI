@@ -554,11 +554,19 @@ When the user says "CubeSat tasarla", "uydu tasarimi", or "satellite design":
 12. Batarya tipi? (Li-ion 18650 / Li-Po / Li-ion Prismatic)
 13. Günlük veri üretimi (MB)?
 
-After the user answers, run this bash command with their values filled in:
+After the user answers ALL 13 questions, run this bash command (replace values with user answers):
 ```
-python -c "import sys; sys.path.insert(0,'D:/Private/Projeler/Python/MustafaCLI'); from src.plugins.sat_maestro.cubesat_wizard import CubeSatDesign; d=CubeSatDesign(mission_name='MISSION', sat_size='1U', orbit_type='LEO', orbit_altitude=500, orbit_inclination=97.4, design_life=2, payload_type='Camera (EO)', payload_power=5.0, payload_mass=200, subsystems=['eps','obc','com_uhf','adcs'], solar_config='Body-mounted', battery_type='Li-ion 18650', data_budget=100); print(d.to_summary())"
+cd D:/Private/Projeler/Python/MustafaCLI && D:/Private/Projeler/Python/MustafaCLI/venv/Scripts/python.exe -c "import sys; sys.path.insert(0,'.'); from src.plugins.sat_maestro.cubesat_wizard import CubeSatDesign; d=CubeSatDesign(mission_name='MISSION', sat_size='1U', orbit_type='LEO', orbit_altitude=500, orbit_inclination=97.4, design_life=2, payload_type='Camera (EO)', payload_power=5.0, payload_mass=200, subsystems=['eps','obc','com_uhf','adcs'], solar_config='Body-mounted', battery_type='Li-ion 18650', data_budget=100); print(d.to_summary())"
 ```
-Then show the result and ask if they want changes or analysis.
+
+IMPORTANT for the bash command:
+- Use the FULL python path: D:/Private/Projeler/Python/MustafaCLI/venv/Scripts/python.exe
+- cd to D:/Private/Projeler/Python/MustafaCLI first
+- Replace ALL parameter values with the user's actual answers
+- subsystems must be a Python list like ['eps','obc','com_uhf','adcs']
+- Map user answers: UHF->com_uhf, S-Band->com_sband, GPS->gps, Propulsion->propulsion, Thermal->thermal
+
+Then show the design summary table and ask if the user wants to change anything or run analysis.
 """
         
         # Skills ekle (eğer varsa)
