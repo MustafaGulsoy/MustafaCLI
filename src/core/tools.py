@@ -252,9 +252,11 @@ Output is captured and returned. Long outputs are truncated from the middle."""
             cmd_parts = shlex.split(command)
             if cmd_parts:
                 cmd_name = cmd_parts[0].lower()
+                # Also check basename for full-path commands like D:/.../python.exe
+                cmd_basename = os.path.basename(cmd_name).replace(".exe", "")
                 # Check if command or its base is in whitelist
                 if not any(
-                    cmd_name.startswith(safe_cmd.lower())
+                    cmd_name.startswith(safe_cmd.lower()) or cmd_basename.startswith(safe_cmd.lower())
                     for safe_cmd in self.SAFE_COMMANDS
                 ):
                     logger.warning(
