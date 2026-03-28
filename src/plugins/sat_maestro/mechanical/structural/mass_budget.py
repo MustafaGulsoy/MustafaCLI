@@ -28,9 +28,10 @@ class MassBudgetAnalyzer:
         """
         violations: list[Violation] = []
 
-        query = "MATCH (a:Assembly) RETURN a.name AS name, a.total_mass AS total_mass"
+        # Support both total_mass and total_mass_g property names
+        query = "MATCH (a:Assembly) RETURN a.name AS name, coalesce(a.total_mass, a.total_mass_g / 1000.0, 0) AS total_mass"
         if subsystem:
-            query = f"MATCH (a:Assembly {{name: '{subsystem}'}}) RETURN a.name AS name, a.total_mass AS total_mass"
+            query = f"MATCH (a:Assembly {{name: '{subsystem}'}}) RETURN a.name AS name, coalesce(a.total_mass, a.total_mass_g / 1000.0, 0) AS total_mass"
 
         records = await self._bridge.neo4j_query(query)
 

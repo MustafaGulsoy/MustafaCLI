@@ -60,11 +60,12 @@ class Neo4jClient:
         if not self._driver:
             raise RuntimeError("Neo4j client not connected. Call connect() first.")
 
+        async def _write_tx(tx):
+            result = await tx.run(query, parameters or {})
+            return await result.data()
+
         async with self._driver.session(database=self._config.neo4j_database) as session:
-            result = await session.execute_write(
-                lambda tx: tx.run(query, parameters or {}).data()
-            )
-            return result
+            return await session.execute_write(_write_tx)
 
     async def close(self) -> None:
         """Close the Neo4j driver."""

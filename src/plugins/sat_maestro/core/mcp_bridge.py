@@ -22,12 +22,15 @@ class McpBridge:
 
     All SAT-MAESTRO agents use this bridge to communicate with
     external tools (Neo4j, FreeCAD, CalculiX, Gmsh) via MCP protocol.
+    Falls back to direct Neo4j client when MCP server is not available.
     """
 
-    def __init__(self, servers: dict[str, McpServerConfig] | None = None) -> None:
+    def __init__(self, servers: dict[str, McpServerConfig] | None = None,
+                 neo4j_client: Any = None) -> None:
         self._server_configs = servers or {}
         self._clients: dict[str, Any] = {}
         self._sessions: dict[str, Any] = {}
+        self._neo4j_direct = neo4j_client  # Direct fallback for Neo4j
 
     @property
     def servers(self) -> dict[str, McpServerConfig]:
@@ -111,14 +114,18 @@ class McpBridge:
     # -- Convenience methods for common operations --
 
     async def neo4j_query(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Execute a Cypher query via Neo4j MCP server."""
+        """Execute a Cypher query. Uses direct client if MCP not connected."""
+        if self._neo4j_direct and not self.is_connected("neo4j"):
+            return await self._neo4j_direct.execute(cypher, params)
         return await self.call_tool("neo4j", "read_neo4j_cypher", {
             "query": cypher,
             "params": params or {},
         })
 
     async def neo4j_write(self, cypher: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Execute a write Cypher query via Neo4j MCP server."""
+        """Execute a write query. Uses direct client if MCP not connected."""
+        if self._neo4j_direct and not self.is_connected("neo4j"):
+            return await self._neo4j_direct.execute_write(cypher, params)
         return await self.call_tool("neo4j", "write_neo4j_cypher", {
             "query": cypher,
             "params": params or {},
@@ -126,6 +133,10 @@ class McpBridge:
 
     async def neo4j_schema(self) -> dict:
         """Get Neo4j database schema."""
+        if self._neo4j_direct and not self.is_connected("neo4j"):
+            return await self._neo4j_direct.execute(
+                "CALL db.schema.visualization()"
+            )
         return await self.call_tool("neo4j", "get_neo4j_schema", {})
 
     async def freecad_execute(self, code: str) -> Any:

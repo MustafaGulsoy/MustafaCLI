@@ -63,12 +63,24 @@ class SatMaestroPlugin(PluginBase):
         except Exception as e:
             logger.warning("SAT-MAESTRO: Could not seed rules: %s", e)
 
-        # Initialize MCP Bridge
-        self._bridge = McpBridge({
-            "neo4j": McpServerConfig(name="neo4j", command="neo4j-mcp"),
-            "gmsh": McpServerConfig(name="gmsh", command=self.config.gmsh_mcp_command),
-            "calculix": McpServerConfig(name="calculix", command=self.config.calculix_path),
-        })
+        # Initialize MCP Bridge with direct Neo4j fallback
+        self._bridge = McpBridge(
+            servers={
+                "neo4j": McpServerConfig(name="neo4j", command="neo4j-mcp"),
+                "freecad": McpServerConfig(name="freecad", command=self.config.freecad_mcp_command),
+                "gmsh": McpServerConfig(
+                    name="gmsh",
+                    command="python",
+                    args=["-m", "src.plugins.sat_maestro.mcp_servers.gmsh"],
+                ),
+                "calculix": McpServerConfig(
+                    name="calculix",
+                    command="python",
+                    args=["-m", "src.plugins.sat_maestro.mcp_servers.calculix"],
+                ),
+            },
+            neo4j_client=self.neo4j,
+        )
 
         # Initialize Electrical Agent with MCP bridge
         from .electrical.agent import ElectricalAgent
