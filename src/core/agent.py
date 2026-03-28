@@ -534,35 +534,41 @@ When the user asks about satellite design, CubeSat, or engineering analysis:
 When the user says "CubeSat tasarla", "uydu tasarimi", or "satellite design":
 - Do NOT explain what a CubeSat is
 - Do NOT use any tools
-- IMMEDIATELY respond with ALL these questions in a single message as a numbered list:
+- IMMEDIATELY show ALL questions and ask user to answer them ALL IN ONE MESSAGE:
+
+```
+CubeSat Tasarim Formu — tüm cevaplari tek mesajda yazin:
 
 1. Uydu boyutu? (1U / 2U / 3U / 6U / 12U)
 2. Misyon adi?
 3. Yörünge tipi? (LEO / SSO / MEO / GTO)
-4. Yörünge yüksekligi (km)? (varsayilan: 500)
-5. Yörünge egimi (derece)? (SSO icin ~97.4)
-6. Tasarim ömrü (yil)?
+4. Yörünge yüksekligi km? (varsayilan: 500)
+5. Yörünge egimi derece? (SSO icin ~97.4)
+6. Tasarim ömrü yil?
 7. Payload tipi? (Camera / SDR / AIS / IoT / Science / Custom)
-8. Payload güç tüketimi (W)?
-9. Payload kütlesi (g)?
+8. Payload güç tüketimi W?
+9. Payload kütlesi g?
 10. Alt sistemler? (EPS, OBC, UHF, S-Band, ADCS, GPS, Propulsion, Thermal)
 11. Günes paneli? (Body-mounted / Deployable 2-panel / Deployable 4-panel)
 12. Batarya tipi? (Li-ion 18650 / Li-Po / Li-ion Prismatic)
-13. Günlük veri üretimi (MB)?
+13. Günlük veri üretimi MB?
 
-After the user answers ALL 13 questions, run this bash command (replace values with user answers):
-```
-cd D:/Private/Projeler/Python/MustafaCLI && D:/Private/Projeler/Python/MustafaCLI/venv/Scripts/python.exe -c "import sys; sys.path.insert(0,'.'); from src.plugins.sat_maestro.cubesat_wizard import CubeSatDesign; d=CubeSatDesign(mission_name='MISSION', sat_size='1U', orbit_type='LEO', orbit_altitude=500, orbit_inclination=97.4, design_life=2, payload_type='Camera (EO)', payload_power=5.0, payload_mass=200, subsystems=['eps','obc','com_uhf','adcs'], solar_config='Body-mounted', battery_type='Li-ion 18650', data_budget=100); print(d.to_summary())"
+Ornek: 3U, TurkSat-1, SSO, 550, 97.6, 3, Camera, 8, 350, EPS+OBC+UHF+ADCS, Deployable 2-panel, Li-ion 18650, 500
 ```
 
-IMPORTANT for the bash command:
-- Use the FULL python path: D:/Private/Projeler/Python/MustafaCLI/venv/Scripts/python.exe
-- cd to D:/Private/Projeler/Python/MustafaCLI first
-- Replace ALL parameter values with the user's actual answers
-- subsystems must be a Python list like ['eps','obc','com_uhf','adcs']
-- Map user answers: UHF->com_uhf, S-Band->com_sband, GPS->gps, Propulsion->propulsion, Thermal->thermal
+Tell the user they can answer like the example — comma-separated in one line or numbered.
 
-Then show the design summary table and ask if the user wants to change anything or run analysis.
+When user provides ALL answers in a single message, run this bash command:
+```
+D:/Private/Projeler/Python/MustafaCLI/venv/Scripts/python.exe D:/Private/Projeler/Python/MustafaCLI/src/plugins/sat_maestro/run_wizard.py --name NAME --size 1U --orbit LEO --altitude 500 --inclination 97.4 --life 2 --payload Camera --payload-power 5 --payload-mass 200 --subsystems eps,obc,com_uhf,adcs --solar Body-mounted --battery Li-ion-18650 --data 100
+```
+
+CRITICAL RULES for the command:
+- Replace ALL flag values with user's actual answers
+- For --subsystems: comma-separated, map: UHF->com_uhf, S-Band->com_sband
+- For --solar/--battery: replace spaces with hyphens if needed
+- Do NOT use cd, do NOT use python -c, use the EXACT command format above
+- Show the output table to user and ask if they want changes
 """
         
         # Skills ekle (eğer varsa)
