@@ -75,6 +75,7 @@ all = [
 [project.entry-points."mustafacli.plugins"]
 # Third-party plugins register here via pip install
 sat-maestro = "src.plugins.sat_maestro.plugin:SatMaestroPlugin"
+arch-analyzer = "src.plugins.arch_analyzer.plugin:ArchAnalyzerPlugin"
 
 [project.scripts]
 local-agent = "src.cli:main"

@@ -1,9 +1,9 @@
 # SAT-MAESTRO Plugin Dependencies
-neo4j[async]==5.27.0
-pygerber==3.0.3
-sexpdata==1.0.2
-jinja2==3.1.4
-PyMuPDF==1.25.3
+neo4j>=5.0.0
+pygerber>=2.4.0
+sexpdata>=1.0.0
+jinja2>=3.1.0
+PyMuPDF>=1.24.0
 # Mechanical analysis dependencies
 mcp>=1.0.0
 numpy>=1.24.0
