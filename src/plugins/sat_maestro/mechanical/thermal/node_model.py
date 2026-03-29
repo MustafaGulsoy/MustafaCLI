@@ -19,9 +19,9 @@ from ...core.mcp_bridge import McpBridge
 
 logger = logging.getLogger(__name__)
 
-# Small conductance to space (boundary) to avoid singular matrix
-_BOUNDARY_CONDUCTANCE = 1e-6  # W/K
-_REFERENCE_TEMP = 0.0  # deg C (space reference)
+# Boundary conductance to deep space — realistic for CubeSat radiation
+_BOUNDARY_CONDUCTANCE = 0.05  # W/K (typical CubeSat radiative coupling)
+_REFERENCE_TEMP = -40.0  # deg C (effective space sink for LEO)
 
 
 class ThermalNodeModel:

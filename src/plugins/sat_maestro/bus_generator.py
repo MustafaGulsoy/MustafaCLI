@@ -441,8 +441,8 @@ class BusGenerator:
         node_count += 1
 
         # Phase 4: Thermal conductance links
-        #   Component -> Structure: 0.5 W/K (conduction through mounting)
-        #   Structure -> Space:     0.01 W/K (radiation to space)
+        #   Component -> Structure: 2.0 W/K (conduction through PCB mounting + bolts)
+        #   Structure -> Space:     0.15 W/K (radiation from 6 faces, emissivity ~0.85)
         link_count = 0
         for comp in components:
             if comp["id"] == "structure_frame":
@@ -462,7 +462,7 @@ class BusGenerator:
                 {
                     "id": link_id,
                     "type": ConductanceType.CONDUCTION.value,
-                    "value": 0.5,
+                    "value": 2.0,
                     "node_a": f"thermal_{comp['id']}",
                     "node_b": "thermal_structure",
                 },
@@ -484,7 +484,7 @@ class BusGenerator:
             {
                 "id": "tc_structure_to_space",
                 "type": ConductanceType.RADIATION.value,
-                "value": 0.01,
+                "value": 0.15,
                 "node_a": "thermal_structure",
                 "node_b": "thermal_space",
             },
