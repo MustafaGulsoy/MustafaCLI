@@ -94,12 +94,14 @@ class CubesatGeometryBuilder:
     # Public API
     # --------------------------------------------------------------------- #
 
-    def build(self, output_dir: Path | str) -> GeometryResult:
+    def build(self, output_dir: Path | str, *, twin: bool = False) -> GeometryResult:
         """Build geometry and export STEP.
 
         Args:
             output_dir: Directory where the ``<mission_name>.step`` file
                 will be written.  Created if it does not exist.
+            twin: If True, create a second identical copy placed next to
+                the first one along the X axis (digital twin visualisation).
 
         Returns:
             A :class:`GeometryResult` with all tags and paths.
@@ -128,7 +130,7 @@ class CubesatGeometryBuilder:
         gmsh.model.add(self._design.mission_name)
 
         try:
-            result = self._build_inner(dims, output_dir)
+            result = self._build_inner(dims, output_dir, twin=twin)
         finally:
             gmsh.finalize()
 
@@ -142,6 +144,8 @@ class CubesatGeometryBuilder:
         self,
         dims: tuple[float, float, float],
         output_dir: Path,
+        *,
+        twin: bool = False,
     ) -> GeometryResult:
         """Core geometry construction (called between init/finalize)."""
         wt = WALL_THICKNESS
@@ -206,12 +210,24 @@ class CubesatGeometryBuilder:
             gmsh.model.addPhysicalGroup(2, bottom_tags, name="BC_bottom")
             logger.debug("Bottom BC surface tags: %s", bottom_tags)
 
-        # ---- 7. Export STEP ----
+        # ---- 7. Digital twin: duplicate entire model beside the original ----
+        if twin:
+            gap_between = dx * 0.5  # half-width gap between twins
+            offset_x = dx + gap_between
+            all_entities = gmsh.model.occ.getEntities()
+            if all_entities:
+                copied = gmsh.model.occ.copy(all_entities)
+                gmsh.model.occ.translate(copied, offset_x, 0, 0)
+                gmsh.model.occ.synchronize()
+                logger.info("Digital twin created at x-offset %.4f m", offset_x)
+
+        # ---- 8. Export STEP ----
         safe_name = "".join(
             c if c.isalnum() or c in "-_" else "_"
             for c in self._design.mission_name
         )
-        step_path = str(output_dir / f"{safe_name}.step")
+        suffix = "_twin" if twin else ""
+        step_path = str(output_dir / f"{safe_name}{suffix}.step")
         gmsh.write(step_path)
         logger.info("STEP file written to %s", step_path)
 
