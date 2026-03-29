@@ -22,10 +22,14 @@ class SatMaestroConfig:
     # Mechanical analysis config
     mass_margin: float = 0.10  # 10% system-level mass margin
     freecad_mcp_command: str = "python -m freecad_mcp"
-    calculix_path: str = "ccx"  # CalculiX executable path
+    calculix_path: str = "D:/Tools/calculix/CL34-win64/bin/ccx/ccx216.exe"
     gmsh_mcp_command: str = "python -m gmsh_mcp"
     min_lateral_freq: float = 15.0  # Hz, minimum lateral frequency requirement
     min_axial_freq: float = 35.0  # Hz, minimum axial frequency requirement
+    # FEM pipeline config
+    fem_element_size: float = 3.0  # mm — target mesh element size
+    fem_wall_thickness: float = 1.5  # mm — CubeSat structure wall thickness
+    fem_safety_factor: float = 1.5  # ECSS structural margin (yield / SF)
 
     @classmethod
     def from_env(cls) -> SatMaestroConfig:
@@ -43,8 +47,14 @@ class SatMaestroConfig:
             vision_model=os.getenv("SAT_MAESTRO_VISION_MODEL", "llava:13b"),
             mass_margin=float(os.getenv("SAT_MAESTRO_MASS_MARGIN", "0.10")),
             freecad_mcp_command=os.getenv("SAT_MAESTRO_FREECAD_MCP_CMD", "python -m freecad_mcp"),
-            calculix_path=os.getenv("SAT_MAESTRO_CALCULIX_PATH", "ccx"),
+            calculix_path=os.getenv(
+                "SAT_MAESTRO_CALCULIX_PATH",
+                "D:/Tools/calculix/CL34-win64/bin/ccx/ccx216.exe",
+            ),
             gmsh_mcp_command=os.getenv("SAT_MAESTRO_GMSH_MCP_CMD", "python -m gmsh_mcp"),
             min_lateral_freq=float(os.getenv("SAT_MAESTRO_MIN_LATERAL_FREQ", "15.0")),
             min_axial_freq=float(os.getenv("SAT_MAESTRO_MIN_AXIAL_FREQ", "35.0")),
+            fem_element_size=float(os.getenv("SAT_MAESTRO_FEM_ELEMENT_SIZE", "3.0")),
+            fem_wall_thickness=float(os.getenv("SAT_MAESTRO_FEM_WALL_THICKNESS", "1.5")),
+            fem_safety_factor=float(os.getenv("SAT_MAESTRO_FEM_SAFETY_FACTOR", "1.5")),
         )
