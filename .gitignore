@@ -70,3 +70,4 @@ agent.log*
 # Security
 secrets/
 credentials/
+sat-reports/
