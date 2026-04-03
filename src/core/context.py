@@ -159,18 +159,62 @@ class ContextManager:
         self._messages.append(message)
         self._total_tokens += message.tokens
     
+    @property
+    def usage_ratio(self) -> float:
+        """Current context usage as a ratio (0.0 to 1.0+)."""
+        effective_max = self.max_tokens - self.reserve_tokens
+        if effective_max <= 0:
+            return 1.0
+        return self._total_tokens / effective_max
+
     def should_compact(self, threshold: float = 0.8) -> bool:
-        """
-        Compaction gerekli mi?
-        
-        Args:
-            threshold: Doluluk oranı (0-1)
-            
-        Returns:
-            bool: Compaction gerekli mi
-        """
-        used_ratio = self._total_tokens / (self.max_tokens - self.reserve_tokens)
-        return used_ratio >= threshold
+        """Compaction gerekli mi?"""
+        return self.usage_ratio >= threshold
+
+    def snip_old_tool_results(self, keep_recent: int = 5) -> int:
+        """Level 1: Truncate old tool result messages."""
+        tool_indices = [i for i, m in enumerate(self._messages) if m.role == MessageRole.TOOL]
+        to_snip = tool_indices[:max(0, len(tool_indices) - keep_recent)]
+        if not to_snip:
+            return 0
+        freed = 0
+        placeholder = "[Tool result truncated]"
+        for idx in to_snip:
+            msg = self._messages[idx]
+            old_tokens = msg.tokens or self.estimator.estimate_message(msg)
+            msg.content = placeholder
+            new_tokens = self.estimator.estimate_message(msg)
+            msg.tokens = new_tokens
+            freed += old_tokens - new_tokens
+        self._total_tokens = self.estimator.estimate_messages(self._messages)
+        return max(freed, 0)
+
+    async def summarize_old_messages(self, provider, keep_recent: int = 10) -> int:
+        """Level 2: Summarize old messages using the model."""
+        old_messages = self.get_old_messages(keep_recent=keep_recent)
+        if not old_messages:
+            return 0
+        tokens_before = self._total_tokens
+        lines = [f"{m.role.value}: {m.content[:500]}" for m in old_messages]
+        transcript = "\n".join(lines)
+        resp = await provider.complete(
+            messages=[{"role": "user", "content": transcript}],
+            system="Summarize this conversation in 2-3 sentences. Keep key decisions, file paths, errors.",
+            max_tokens=300,
+        )
+        summary = resp.get("content", "")
+        self.compact(summary=summary, keep_recent=keep_recent)
+        return max(tokens_before - self._total_tokens, 0)
+
+    def emergency_collapse(self, keep_recent: int = 3) -> int:
+        """Level 3: Keep only the most recent messages."""
+        tokens_before = self._total_tokens
+        if len(self._messages) <= keep_recent:
+            return 0
+        self._messages = self._messages[-keep_recent:]
+        self._compacted_summary = "[Context collapsed due to length]"
+        self._total_tokens = self.estimator.estimate_messages(self._messages)
+        return max(tokens_before - self._total_tokens, 0)
     
     def get_recent_messages(self, n: int) -> list[Message]:
         """Son n mesajı al"""

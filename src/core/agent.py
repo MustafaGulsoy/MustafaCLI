@@ -305,45 +305,58 @@ class Agent:
                         break
     
     async def _get_model_response(self) -> AgentResponse:
-        """
-        Model'den yanıt al - provider abstraction
+        """Model'den yanıt al — with automatic error-recovery compaction.
 
-        Bu method, context'i model'e gönderir ve yanıtı parse eder.
+        If the model returns a context-too-long error, progressively compact
+        (Level 1 → 2 → 3) and retry before surfacing the error.
         """
-        # System prompt'u hazırla ve cache'le
         system_prompt = self._build_system_prompt()
 
-        # Cache system prompt ve tool definitions if using CachedContextManager
         if isinstance(self.context, CachedContextManager):
             self.context.set_system_prompt(system_prompt)
             self.context.set_tool_definitions(self.tools.get_tool_definitions())
 
-        # Messages'ı model formatına çevir
         messages = self.context.to_model_format()
-
-        # Tool definitions
         tool_definitions = self.tools.get_tool_definitions()
-        
-        # Model'i çağır
+
         if self._on_thinking:
             self._on_thinking("Thinking...")
-        
-        response = await self.provider.complete(
-            messages=messages,
-            system=system_prompt,
-            tools=tool_definitions,
-            temperature=self.config.temperature,
-            max_tokens=self.config.max_tokens,
-        )
-        
-        return AgentResponse(
-            id=response.get("id", str(uuid4())),
-            content=response.get("content", ""),
-            tool_calls=response.get("tool_calls", []),
-            thinking=response.get("thinking"),
-            iteration=self.current_iteration,
-            tokens_used=response.get("usage", {}).get("total_tokens", 0),
-        )
+
+        last_error = None
+        for attempt in range(4):
+            try:
+                response = await self.provider.complete(
+                    messages=messages,
+                    system=system_prompt,
+                    tools=tool_definitions,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                )
+                return AgentResponse(
+                    id=response.get("id", str(uuid4())),
+                    content=response.get("content", ""),
+                    tool_calls=response.get("tool_calls", []),
+                    thinking=response.get("thinking"),
+                    iteration=self.current_iteration,
+                    tokens_used=response.get("usage", {}).get("total_tokens", 0),
+                )
+            except Exception as exc:
+                err = str(exc).lower()
+                is_ctx_err = any(p in err for p in [
+                    "context length", "too long", "token limit", "num_ctx",
+                ])
+                if not is_ctx_err or attempt >= 3:
+                    raise
+                last_error = exc
+                if attempt == 0:
+                    self.context.snip_old_tool_results(keep_recent=5)
+                elif attempt == 1:
+                    await self.context.summarize_old_messages(self.provider, keep_recent=10)
+                else:
+                    self.context.emergency_collapse(keep_recent=3)
+                messages = self.context.to_model_format()
+
+        raise last_error
     
     async def _execute_tools(self, tool_calls: list[dict]) -> list[ToolResult]:
         """
@@ -591,36 +604,25 @@ CRITICAL RULES for the command:
         return ""
     
     async def _compact_context(self) -> None:
+        """3-level context compaction (inspired by Claude Code).
+
+        Level 1 (>60%): Snip old tool results
+        Level 2 (>80%): Summarize old conversation via model
+        Level 3 (>95%): Emergency collapse to last 3 messages
         """
-        Context'i compact et - uzun konuşmalar için kritik
-        
-        Bu method, eski mesajları özetler ve context'i küçültür.
-        Claude Code'un uzun session'larda çalışabilmesinin sırrı.
-        """
-        # Basit compaction: Eski mesajları özetle
-        old_messages = self.context.get_old_messages(keep_recent=10)
-        
-        if not old_messages:
-            return
-        
-        # Model'den özet iste
-        summary_prompt = "Summarize the following conversation history in a few sentences, keeping important context:\n\n"
-        for msg in old_messages:
-            summary_prompt += f"{msg.role.value}: {msg.content[:500]}...\n"
-        
-        summary_response = await self.provider.complete(
-            messages=[{"role": "user", "content": summary_prompt}],
-            system="You are a helpful assistant that summarizes conversations concisely.",
-            max_tokens=500,
-        )
-        
-        summary = summary_response.get("content", "")
-        
-        # Context'i güncelle
-        self.context.compact(
-            summary=summary,
-            keep_recent=10,
-        )
+        usage = self.context.usage_ratio
+        if usage > 0.95:
+            freed = self.context.emergency_collapse(keep_recent=3)
+            if self._on_thinking:
+                self._on_thinking(f"Context collapsed — freed ~{freed} tokens")
+        elif usage > 0.80:
+            freed = await self.context.summarize_old_messages(self.provider, keep_recent=10)
+            if self._on_thinking:
+                self._on_thinking(f"Summarized old messages — freed ~{freed} tokens")
+        elif usage > 0.60:
+            freed = self.context.snip_old_tool_results(keep_recent=5)
+            if self._on_thinking:
+                self._on_thinking(f"Snipped tool results — freed ~{freed} tokens")
     
     def reset(self) -> None:
         """Agent state'ini sıfırla"""
