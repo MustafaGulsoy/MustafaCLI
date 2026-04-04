@@ -553,8 +553,11 @@ Type your request or /help for commands.
                 streaming_text = False
 
                 # Show waiting indicator while model loads/thinks
+                thinking_msg = f"{random.choice(_THINKING_PHRASES)}..."
                 if self.console:
-                    self.console.print(f"[dim]{random.choice(_THINKING_PHRASES)}...[/dim]", end="\r")
+                    self.console.print(f"[dim]{thinking_msg}[/dim]")
+                else:
+                    print(thinking_msg)
 
                 try:
                     async for chunk in self.agent.stream_run(prompt):

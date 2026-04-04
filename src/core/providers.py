@@ -273,8 +273,10 @@ class OllamaProvider(ModelProvider):
         in_think = False
         first_chunk = True
 
+        # Use longer timeout for streaming — model may take 60s+ for thinking before first token
+        stream_timeout = httpx.Timeout(timeout=600.0, connect=30.0)
         async with self.client.stream(
-            "POST", f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
+            "POST", f"{self.base_url}/api/chat", json=payload, timeout=stream_timeout
         ) as response:
             async for line in response.aiter_lines():
                 if not line.strip():
