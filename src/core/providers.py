@@ -234,6 +234,102 @@ class OllamaProvider(ModelProvider):
                 ollama_messages, temperature, max_tokens
             )
     
+    async def stream_complete(
+        self,
+        messages: list[dict],
+        system: Optional[str] = None,
+        tools: Optional[list[dict]] = None,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        **kwargs,
+    ):
+        """Streaming version — yields content chunks as they arrive.
+
+        Yields dicts with keys:
+          {"type": "content", "text": "..."} — text token
+          {"type": "done", "content": "full text", "tool_calls": [...], "usage": {...}}
+        """
+        ollama_messages = []
+        if system:
+            ollama_messages.append({"role": "system", "content": system})
+        for msg in messages:
+            ollama_messages.append({"role": msg["role"], "content": msg.get("content", "")})
+
+        payload = {
+            "model": self.model,
+            "messages": ollama_messages,
+            "stream": True,
+            "keep_alive": "10m",
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": 8192,
+            },
+        }
+        if tools and self.supports_tools:
+            payload["tools"] = tools
+
+        full_content = ""
+        in_think = False
+
+        async with self.client.stream(
+            "POST", f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
+        ) as response:
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if data.get("done"):
+                    # Final chunk — parse tool calls if present
+                    tool_calls = []
+                    msg = data.get("message", {})
+                    if "tool_calls" in msg:
+                        for tc in msg["tool_calls"]:
+                            tool_calls.append({
+                                "id": tc.get("id", f"call_{len(tool_calls)}"),
+                                "name": tc.get("function", {}).get("name", ""),
+                                "arguments": tc.get("function", {}).get("arguments", {}),
+                            })
+                    # Fallback: parse from accumulated content
+                    if not tool_calls and full_content:
+                        tool_calls = self._parse_tool_calls_from_text(full_content)
+
+                    yield {
+                        "type": "done",
+                        "content": full_content,
+                        "tool_calls": tool_calls,
+                        "usage": {
+                            "prompt_tokens": data.get("prompt_eval_count", 0),
+                            "completion_tokens": data.get("eval_count", 0),
+                            "total_tokens": data.get("prompt_eval_count", 0) + data.get("eval_count", 0),
+                        },
+                    }
+                    return
+
+                # Streaming content chunk
+                chunk = data.get("message", {}).get("content", "")
+                if not chunk:
+                    continue
+
+                # Filter <think>...</think> blocks (qwen3 thinking mode)
+                for char in chunk:
+                    if full_content.endswith("<think") and char == ">":
+                        in_think = True
+                        full_content += char
+                        continue
+                    if in_think:
+                        full_content += char
+                        if full_content.endswith("</think>"):
+                            in_think = False
+                        continue
+
+                    full_content += char
+                    yield {"type": "content", "text": char}
+
     @retry(
         stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
         wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT, max=RETRY_MAX_WAIT),

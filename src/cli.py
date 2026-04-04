@@ -481,28 +481,38 @@ Type your request or /help for commands.
             print()
     
     async def run_single(self, prompt: str) -> str:
-        """Single prompt execution (non-interactive)."""
+        """Single prompt execution with streaming."""
         self._tool_count = 0
         self._phase_start = _time.time()
         final_content = ""
+        streaming_text = False
 
-        if self.console:
-            spinner = Spinner("dots", text="[cyan]Thinking...[/cyan]")
-            with Live(spinner, console=self.console, refresh_per_second=10, transient=True) as live:
-                self._live = live
-                async for response in self.agent.run(prompt):
-                    if response.tool_calls:
-                        self._set_status(f"Iteration {response.iteration} — {random.choice(_THINKING_PHRASES)}")
-                    if response.state == AgentState.COMPLETED:
-                        final_content = response.content
-                self._live = None
-        else:
-            print("Processing...")
-            async for response in self.agent.run(prompt):
-                if response.state == AgentState.COMPLETED:
-                    final_content = response.content
+        async for chunk in self.agent.stream_run(prompt):
+            ctype = chunk.get("type", "")
+            if ctype == "content":
+                if not streaming_text:
+                    print("Agent: ", end="", flush=True)
+                    streaming_text = True
+                print(chunk.get("text", ""), end="", flush=True)
+            elif ctype == "tool_start":
+                if streaming_text:
+                    print()
+                    streaming_text = False
+                name = chunk.get("name", "")
+                print(f"  > {name}")
+            elif ctype == "tool_end":
+                ok = chunk.get("success", False)
+                out = chunk.get("output", "")[:100]
+                print(f"  {'OK' if ok else 'FAIL'}: {out}")
+            elif ctype == "done":
+                if streaming_text:
+                    print()
+                final_content = chunk.get("content", "")
+            elif ctype == "error":
+                if streaming_text:
+                    print()
+                print(f"Error: {chunk.get('message', '')}")
 
-        self._print_response(final_content)
         return final_content
     
     async def run_interactive(self):
@@ -531,42 +541,85 @@ Type your request or /help for commands.
                         break
                     continue
                 
-                # Agent çalıştır
+                # Agent çalıştır (streaming)
                 self._tool_count = 0
                 self._phase_start = _time.time()
+                final_content = ""
+                final_iteration = 0
+                final_tokens = 0
+                had_error = False
+                streaming_text = False
 
-                if self.console:
-                    spinner = Spinner("dots", text=f"[cyan]{random.choice(_THINKING_PHRASES)}...[/cyan]")
-                    with Live(spinner, console=self.console, refresh_per_second=10, transient=True) as live:
-                        self._live = live
-                        async for response in self.agent.run(prompt):
-                            if response.tool_calls:
-                                self._set_status(
-                                    f"Iteration {response.iteration} — {random.choice(_THINKING_PHRASES)}"
-                                )
-                            if response.state == AgentState.COMPLETED:
-                                break
-                            elif response.state == AgentState.ERROR:
-                                break
-                        self._live = None
-                else:
-                    print("Processing...")
-                    async for response in self.agent.run(prompt):
-                        if response.state in (AgentState.COMPLETED, AgentState.ERROR):
-                            break
+                try:
+                    async for chunk in self.agent.stream_run(prompt):
+                        ctype = chunk.get("type", "")
 
-                # Final response
-                if response.state == AgentState.COMPLETED:
-                    self._print_response(response.content)
-                    elapsed = _time.time() - self._phase_start
+                        if ctype == "content":
+                            if not streaming_text:
+                                # First text token — print header
+                                if self.console:
+                                    self.console.print("\n[green]Agent:[/green] ", end="")
+                                else:
+                                    print("\nAgent: ", end="")
+                                streaming_text = True
+                            # Print token immediately
+                            text = chunk.get("text", "")
+                            if self.console:
+                                self.console.print(text, end="", highlight=False)
+                            else:
+                                print(text, end="", flush=True)
+
+                        elif ctype == "tool_start":
+                            if streaming_text:
+                                print()  # newline after streamed text
+                                streaming_text = False
+                            self._tool_count += 1
+                            name = chunk.get("name", "")
+                            args = chunk.get("args", {})
+                            arg_str = ", ".join(f"{k}={repr(v)[:30]}" for k, v in list(args.items())[:2])
+                            if self.console:
+                                self.console.print(f"  [dim]┌─[/dim] [cyan]{name}[/cyan] [dim]{arg_str}[/dim]")
+                            else:
+                                print(f"  >>> {name}({arg_str})")
+
+                        elif ctype == "tool_end":
+                            name = chunk.get("name", "")
+                            ok = chunk.get("success", False)
+                            out = chunk.get("output", "")
+                            if self.console:
+                                icon = "[green]✓[/green]" if ok else "[red]✗[/red]"
+                                self.console.print(f"  [dim]└─ {icon} {out[:120]}[/dim]")
+                            else:
+                                print(f"  <<< {'OK' if ok else 'FAIL'}: {out[:100]}")
+
+                        elif ctype == "done":
+                            if streaming_text:
+                                print()  # newline
+                                streaming_text = False
+                            final_content = chunk.get("content", "")
+                            final_iteration = chunk.get("iteration", 0)
+                            final_tokens = chunk.get("tokens", 0)
+
+                        elif ctype == "error":
+                            if streaming_text:
+                                print()
+                                streaming_text = False
+                            self._print_error(chunk.get("message", "Unknown error"))
+                            had_error = True
+
+                except KeyboardInterrupt:
+                    if streaming_text:
+                        print()
+                    self._print_info("\nCancelled. Type /quit to exit.")
+                    continue
+
+                if not had_error and final_content:
                     elapsed_ms = int((_time.time() - self._phase_start) * 1000)
                     self._print_info(
-                        f"Completed in {response.iteration} iteration(s), "
-                        f"{response.tokens_used:,} tokens, "
+                        f"Completed in {final_iteration} iteration(s), "
+                        f"{final_tokens:,} tokens, "
                         f"{elapsed_ms}ms"
                     )
-                elif response.state == AgentState.ERROR:
-                    self._print_error(response.content)
                 
             except KeyboardInterrupt:
                 self._print_info("\nCancelled. Type /quit to exit.")
@@ -584,10 +637,93 @@ Type your request or /help for commands.
         await self.provider.close()
 
 
+def _handle_plugin_command(argv: list[str]) -> None:
+    """Handle `mustafa plugin <subcommand>` commands."""
+    from .plugins.manager import install_plugin, remove_plugin, get_installed, get_catalog
+
+    console = Console() if RICH_AVAILABLE else None
+
+    if len(argv) < 1:
+        argv = ["list"]
+
+    subcmd = argv[0]
+
+    if subcmd == "list":
+        catalog = get_catalog()
+        installed = get_installed()
+        if console:
+            table = Table(title="Plugins", border_style="cyan")
+            table.add_column("Plugin", style="green")
+            table.add_column("Durum", style="bold", justify="center")
+            table.add_column("Aciklama", style="dim")
+            for name, info in catalog.items():
+                status = "[green]Installed[/green]" if name in installed else "[dim]--[/dim]"
+                table.add_row(name, status, info.description)
+            console.print(table)
+        else:
+            for name, info in catalog.items():
+                mark = "[installed]" if name in installed else ""
+                print(f"  {name} {mark} — {info.description}")
+
+    elif subcmd == "install":
+        if len(argv) < 2:
+            print("Usage: mustafa plugin install <name>")
+            return
+        name = argv[1]
+        if console:
+            console.print(f"[cyan]Installing plugin '{name}'...[/cyan]")
+
+        success, msg = install_plugin(name)
+        if success:
+            info = get_catalog().get(name)
+            if console:
+                console.print(f"[green]Plugin '{name}' installed.[/green]")
+                if info and info.post_install_notes:
+                    console.print("\n[bold]Sonraki adimlar:[/bold]")
+                    for note in info.post_install_notes:
+                        console.print(f"  [dim]>[/dim] {note}")
+                if info and info.docker_compose:
+                    console.print(f"\n[yellow]Docker servisleri baslatmak icin:[/yellow]")
+                    console.print(f"  docker compose -f {info.docker_compose} up -d")
+            else:
+                print(f"Plugin '{name}' installed.")
+                if info and info.post_install_notes:
+                    for note in info.post_install_notes:
+                        print(f"  > {note}")
+        else:
+            if console:
+                console.print(f"[red]Install failed:[/red] {msg}")
+            else:
+                print(f"Install failed: {msg}")
+
+    elif subcmd == "remove":
+        if len(argv) < 2:
+            print("Usage: mustafa plugin remove <name>")
+            return
+        name = argv[1]
+        success, msg = remove_plugin(name)
+        if console:
+            if success:
+                console.print(f"[green]{msg}[/green]")
+            else:
+                console.print(f"[red]{msg}[/red]")
+        else:
+            print(msg)
+
+    else:
+        print(f"Unknown plugin command: {subcmd}")
+        print("Usage: mustafa plugin [list|install|remove] [name]")
+
+
 def main():
     """
     CLI entry point
     """
+    # Handle `mustafa plugin ...` before argparse
+    if len(sys.argv) >= 2 and sys.argv[1] == "plugin":
+        _handle_plugin_command(sys.argv[2:])
+        return
+
     # Load settings from .env file
     settings = AgentSettings()
 

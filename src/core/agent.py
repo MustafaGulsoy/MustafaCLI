@@ -149,6 +149,115 @@ class Agent:
         self._on_tool_start = on_tool_start
         self._on_tool_end = on_tool_end
     
+    async def stream_run(self, user_input: str):
+        """Streaming version of run — yields content chunks token-by-token.
+
+        Yields dicts:
+          {"type": "content", "text": "..."}   — streamed text token
+          {"type": "tool_start", "name": "...", "args": {...}}
+          {"type": "tool_end", "name": "...", "success": bool, "output": "..."}
+          {"type": "done", "content": "...", "iteration": N, "tokens": N}
+          {"type": "error", "message": "..."}
+        """
+        self.state = AgentState.THINKING
+        self.current_iteration = 0
+        self._consecutive_tool_calls = 0
+        self._recent_failed_tools = []
+
+        self.context.add_message(Message(
+            role=MessageRole.USER, content=user_input, timestamp=datetime.now(),
+        ))
+
+        system_prompt = self._build_system_prompt()
+        if isinstance(self.context, CachedContextManager):
+            self.context.set_system_prompt(system_prompt)
+            self.context.set_tool_definitions(self.tools.get_tool_definitions())
+
+        while self.current_iteration < self.config.max_iterations:
+            self.current_iteration += 1
+
+            if self.context.should_compact(self.config.compaction_threshold):
+                await self._compact_context()
+
+            messages = self.context.to_model_format()
+            tool_defs = self.tools.get_tool_definitions()
+
+            full_content = ""
+            tool_calls = []
+            usage = {}
+
+            try:
+                async for chunk in self.provider.stream_complete(
+                    messages=messages, system=system_prompt,
+                    tools=tool_defs, temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                ):
+                    if chunk["type"] == "content":
+                        yield chunk
+                        full_content += chunk["text"]
+                    elif chunk["type"] == "done":
+                        full_content = chunk.get("content", full_content)
+                        tool_calls = chunk.get("tool_calls", [])
+                        usage = chunk.get("usage", {})
+            except Exception as e:
+                yield {"type": "error", "message": str(e)}
+                return
+
+            if tool_calls:
+                self._consecutive_tool_calls += 1
+                if self._consecutive_tool_calls > self.config.max_consecutive_tool_calls:
+                    yield {"type": "done", "content": full_content + "\n[Max tool calls reached]",
+                           "iteration": self.current_iteration, "tokens": usage.get("total_tokens", 0)}
+                    return
+
+                self.context.add_message(Message(
+                    role=MessageRole.ASSISTANT, content=full_content,
+                    tool_calls=tool_calls, timestamp=datetime.now(),
+                ))
+
+                tool_calls = self._coerce_tool_args_list(tool_calls)
+                for tc in tool_calls:
+                    name = tc.get("name", "")
+                    args = tc.get("arguments", {})
+                    yield {"type": "tool_start", "name": name, "args": args}
+
+                    tool = self.tools.get_tool(name)
+                    if tool is None:
+                        result = ToolResult(success=False, output="", error=f"Unknown tool: {name}")
+                    else:
+                        try:
+                            coerced = self._coerce_tool_args(args)
+                            result = await asyncio.wait_for(
+                                tool.execute(**coerced), timeout=self.config.tool_timeout)
+                        except Exception as e:
+                            result = ToolResult(success=False, output="", error=str(e))
+
+                    yield {"type": "tool_end", "name": name, "success": result.success,
+                           "output": result.output[:200] if result.success else result.error[:200]}
+
+                    self.context.add_message(Message(
+                        role=MessageRole.TOOL,
+                        content=result.output if result.success else f"Error: {result.error}",
+                        tool_call_id=tc.get("id", ""), tool_name=name,
+                        timestamp=datetime.now(),
+                    ))
+                continue
+
+            # No tool calls = final response
+            self._consecutive_tool_calls = 0
+            self.context.add_message(Message(
+                role=MessageRole.ASSISTANT, content=full_content, timestamp=datetime.now(),
+            ))
+            yield {"type": "done", "content": full_content,
+                   "iteration": self.current_iteration, "tokens": usage.get("total_tokens", 0)}
+            return
+
+    def _coerce_tool_args_list(self, tool_calls: list[dict]) -> list[dict]:
+        """Coerce args in a list of tool calls."""
+        for tc in tool_calls:
+            tc["arguments"] = self._coerce_tool_args(tc.get("arguments", {}))
+        return tool_calls
+
     async def run(
         self,
         user_input: str,
