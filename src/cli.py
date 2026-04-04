@@ -487,6 +487,8 @@ Type your request or /help for commands.
         final_content = ""
         streaming_text = False
 
+        print(f"{random.choice(_THINKING_PHRASES)}...", end="\r", flush=True)
+
         async for chunk in self.agent.stream_run(prompt):
             ctype = chunk.get("type", "")
             if ctype == "content":
@@ -550,14 +552,19 @@ Type your request or /help for commands.
                 had_error = False
                 streaming_text = False
 
+                # Show waiting indicator while model loads/thinks
+                if self.console:
+                    self.console.print(f"[dim]{random.choice(_THINKING_PHRASES)}...[/dim]", end="\r")
+
                 try:
                     async for chunk in self.agent.stream_run(prompt):
                         ctype = chunk.get("type", "")
 
                         if ctype == "content":
                             if not streaming_text:
-                                # First text token — print header
+                                # First token arrived — clear waiting indicator, print header
                                 if self.console:
+                                    self.console.print(" " * 40, end="\r")  # clear line
                                     self.console.print("\n[green]Agent:[/green] ", end="")
                                 else:
                                     print("\nAgent: ", end="")

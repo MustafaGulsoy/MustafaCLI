@@ -271,6 +271,7 @@ class OllamaProvider(ModelProvider):
 
         full_content = ""
         in_think = False
+        first_chunk = True
 
         async with self.client.stream(
             "POST", f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
