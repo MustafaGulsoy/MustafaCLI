@@ -317,19 +317,20 @@ class OllamaProvider(ModelProvider):
                     continue
 
                 # Filter <think>...</think> blocks (qwen3 thinking mode)
-                for char in chunk:
-                    if full_content.endswith("<think") and char == ">":
-                        in_think = True
-                        full_content += char
-                        continue
-                    if in_think:
-                        full_content += char
-                        if full_content.endswith("</think>"):
-                            in_think = False
-                        continue
+                if "<think>" in chunk:
+                    in_think = True
+                if in_think:
+                    full_content += chunk
+                    if "</think>" in chunk:
+                        in_think = False
+                        # Extract text after </think>
+                        after = chunk.split("</think>", 1)[-1]
+                        if after:
+                            yield {"type": "content", "text": after}
+                    continue
 
-                    full_content += char
-                    yield {"type": "content", "text": char}
+                full_content += chunk
+                yield {"type": "content", "text": chunk}
 
     @retry(
         stop=stop_after_attempt(MAX_RETRY_ATTEMPTS),
